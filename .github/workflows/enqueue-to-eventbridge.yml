@@ -1,0 +1,74 @@
+name: "Enqueue Agent Tasks to EventBridge"
+
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  enqueue:
+    if: contains(github.event.issue.labels.*.name, 'Work')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Parse issue body and send to EventBridge
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          # Parse the issue body to extract form data
+          # This is a simplified parser - in production you might want more robust parsing
+          AGENT=$(echo "$ISSUE_BODY" | grep -A1 "Assigned Agent" | tail -1 | xargs)
+          SPEC=$(echo "$ISSUE_BODY" | sed -n '/What should the agent do?/,/Deadline/p' | sed '1d;$d' | base64 -w0)
+          DEADLINE=$(echo "$ISSUE_BODY" | grep -A1 "Deadline" | tail -1 | xargs)
+          DEPS=$(echo "$ISSUE_BODY" | sed -n '/Dependencies/,$p' | sed '1d' | base64 -w0 || echo "")
+          
+          # Default deadline if none provided
+          if [ -z "$DEADLINE" ] || [ "$DEADLINE" = "none" ]; then
+            DEADLINE="none"
+          fi
+          
+          # Create EventBridge event
+          cat > event.json << EOF
+          {
+            "Entries": [
+              {
+                "Source": "github.issues",
+                "DetailType": "devops.request",
+                "Detail": {
+                  "requestId": "issue-$ISSUE_NUMBER",
+                  "action": "agentWork",
+                  "stage": "prod",
+                  "requestedBy": "GitHubCI",
+                  "agent": "$AGENT",
+                  "payload": {
+                    "spec": "$SPEC",
+                    "deadline": "$DEADLINE",
+                    "deps": "$DEPS",
+                    "issueNumber": "$ISSUE_NUMBER",
+                    "issueTitle": "$ISSUE_TITLE",
+                    "issueUrl": "$ISSUE_URL"
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+          
+          # Send to EventBridge
+          aws events put-events --cli-input-json file://event.json
+          
+          echo "✅ Sent agent task to EventBridge:"
+          echo "  Agent: $AGENT"
+          echo "  Issue: #$ISSUE_NUMBER"
+          echo "  Title: $ISSUE_TITLE" 

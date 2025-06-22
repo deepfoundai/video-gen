@@ -1,0 +1,211 @@
+=== DEVOPS-DEBUG AGENT CORS INVESTIGATION ===
+Starting at: Sun Jun 22 14:44:53 EDT 2025
+
+=== DNS RESOLUTION ===
+Server:		209.18.47.61
+Address:	209.18.47.61#53
+
+Non-authoritative answer:
+Name:	video.deepfoundai.com
+Address: 18.173.132.11
+Name:	video.deepfoundai.com
+Address: 18.173.132.103
+Name:	video.deepfoundai.com
+Address: 18.173.132.37
+Name:	video.deepfoundai.com
+Address: 18.173.132.27
+
+
+=== ENV.JS API CONFIGURATION ===
+export const env={"PUBLIC_JOBS_API_URL":"https://o0fvahtccd.execute-api.us-east-1.amazonaws.com/v1","PUBLIC_CREDITS_API_URL":"https://elu5mb5p45.execute-api.us-east-1.amazonaws.com/v1","PUBLIC_AUTH_REGION":"us-east-1","PUBLIC_AUTH_USER_POOL":"us-east-1_q9cVE7WTT","PUBLIC_AUTH_CLIENT_ID":"7paapnr8fbkanimk5bgpriagmg"}
+
+=== PREFLIGHT OPTIONS TESTS ===
+--- Testing: https://hxk5lx2y17.execute-api.us-east-1.amazonaws.com/v1/credits/balance ---
+HTTP/2 403 
+content-type: application/json
+content-length: 42
+date: Sun, 22 Jun 2025 18:44:53 GMT
+access-control-allow-methods: GET,POST,OPTIONS
+x-amzn-requestid: 566d4cf7-fb50-476b-8750-90fe6c951531
+access-control-allow-origin: https://video.deepfoundai.com
+access-control-allow-headers: Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token
+x-amzn-errortype: MissingAuthenticationTokenException
+x-amz-apigw-id: MlFN-GY0oAMEEhw=
+x-cache: Error from cloudfront
+via: 1.1 836a4a85ed2221f76e2beedeab244eba.cloudfront.net (CloudFront)
+x-amz-cf-pop: JFK50-P3
+x-amz-cf-id: HM46tOIgoJwg2-Yu_mGgCQvLUVkwxGG7wHCi9I2JHe8-9xUXAZEz6w==
+
+{"message":"Missing Authentication Token"}
+--- Testing: https://6ydbgbao92.execute-api.us-east-1.amazonaws.com/v1/jobs/overview ---
+HTTP/2 403 
+content-type: application/json
+content-length: 42
+date: Sun, 22 Jun 2025 18:44:54 GMT
+access-control-allow-methods: GET,POST,OPTIONS
+x-amzn-requestid: a879ea6c-df1b-40d2-aa4b-e6759d89ba01
+access-control-allow-origin: https://video.deepfoundai.com
+access-control-allow-headers: Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token
+x-amzn-errortype: MissingAuthenticationTokenException
+x-amz-apigw-id: MlFOBE3FoAMEnoQ=
+x-cache: Error from cloudfront
+via: 1.1 7922a002a59b7f43e6eb47ceba9a3654.cloudfront.net (CloudFront)
+x-amz-cf-pop: JFK52-P10
+x-amz-cf-id: 0GixQho174IUve5aDlXVbXRmS1PqNUIvNGPSczbw0NYPVf_VP_SdzA==
+
+{"message":"Missing Authentication Token"}
+--- Testing: https://elu5mb5p45.execute-api.us-east-1.amazonaws.com/v1/credits/balance ---
+HTTP/2 403 
+date: Sun, 22 Jun 2025 18:44:54 GMT
+content-type: application/json
+content-length: 42
+x-amzn-requestid: 09f8744c-c203-4d15-9d10-6cc73b17d756
+access-control-allow-origin: https://video.deepfoundai.com
+access-control-allow-headers: Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token
+x-amzn-errortype: MissingAuthenticationTokenException
+x-amz-apigw-id: MlFODFevoAMEbDA=
+access-control-allow-methods: GET,POST,OPTIONS
+
+{"message":"Missing Authentication Token"}
+--- Testing: https://o0fvahtccd.execute-api.us-east-1.amazonaws.com/v1/jobs/overview ---
+HTTP/2 403 
+date: Sun, 22 Jun 2025 18:44:54 GMT
+content-type: application/json
+content-length: 42
+x-amzn-requestid: 85a5dc6e-144f-47a2-8ae5-0cf277606ef6
+access-control-allow-origin: https://video.deepfoundai.com
+access-control-allow-headers: Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token
+x-amzn-errortype: MissingAuthenticationTokenException
+x-amz-apigw-id: MlFOGHESIAMETFw=
+access-control-allow-methods: GET,POST,OPTIONS
+
+{"message":"Missing Authentication Token"}
+=== CLOUDFRONT DISTRIBUTION ===
+Distribution ID: E12GT32WWYB30V
+{
+    "DomainName": "d2aoglvjap4pga.cloudfront.net",
+    "Origins": null
+}
+
+=== API GATEWAY CONFIGURATION ===
+--- REST APIs ---
+--------------------------------------------------------------
+|                         GetRestApis                        |
++---------------+-------------+--------------------+---------+
+| apiKeySource  |     id      |       name         | policy  |
++---------------+-------------+--------------------+---------+
+|  HEADER       |  6ydbgbao92 |  admin-api-dev     |  None   |
+|  HEADER       |  elu5mb5p45 |  credits-api       |  None   |
+|  HEADER       |  hxk5lx2y17 |  cc-billing-tiers  |  None   |
+|  HEADER       |  o0fvahtccd |  jobs-api          |  None   |
++---------------+-------------+--------------------+---------+
+
+=== DETAILED API ANALYSIS ===
+--- API: hxk5lx2y17 ---
+Resources:
+-----------------------------------
+|          GetResources           |
++---------+-----------------------+
+|   id    |         path          |
++---------+-----------------------+
+|  3krk57 |  /v1/credits/balance  |
++---------+-----------------------+
+OPTIONS method for /v1/credits/balance:
+{
+    "httpMethod": "OPTIONS",
+    "authorizationType": "NONE",
+    "apiKeyRequired": false,
+    "methodResponses": {
+        "200": {
+            "statusCode": "200",
+            "responseParameters": {
+                "method.response.header.Access-Control-Allow-Headers": false,
+                "method.response.header.Access-Control-Allow-Methods": false,
+                "method.response.header.Access-Control-Allow-Origin": false
+            }
+        },
+        "204": {
+            "statusCode": "204"
+        }
+    },
+    "methodIntegration": {
+        "type": "MOCK",
+        "requestTemplates": {
+            "application/json": "{\"statusCode\": 200}"
+        },
+        "passthroughBehavior": "WHEN_NO_MATCH",
+        "timeoutInMillis": 29000,
+        "cacheNamespace": "3krk57",
+        "cacheKeyParameters": [],
+        "integrationResponses": {
+            "200": {
+                "statusCode": "200",
+                "responseParameters": {
+                    "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+                    "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+                    "method.response.header.Access-Control-Allow-Origin": "'https://video.deepfoundai.com'"
+                },
+                "responseTemplates": {
+                    "application/json": null
+                }
+            }
+        }
+    }
+}
+Gateway Responses:
+[
+    {
+        "type": "DEFAULT_4XX",
+        "headers": {
+            "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+            "gatewayresponse.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+            "gatewayresponse.header.Access-Control-Allow-Origin": "'https://video.deepfoundai.com'"
+        }
+    },
+    {
+        "type": "MISSING_AUTHENTICATION_TOKEN",
+        "headers": {
+            "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+            "gatewayresponse.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+            "gatewayresponse.header.Access-Control-Allow-Origin": "'https://video.deepfoundai.com'"
+        }
+    }
+]
+
+--- API: 6ydbgbao92 ---
+Resources:
+Gateway Responses:
+[
+    {
+        "type": "DEFAULT_4XX",
+        "headers": {
+            "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+            "gatewayresponse.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+            "gatewayresponse.header.Access-Control-Allow-Origin": "'https://video.deepfoundai.com'"
+        }
+    },
+    {
+        "type": "MISSING_AUTHENTICATION_TOKEN",
+        "headers": {
+            "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+            "gatewayresponse.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+            "gatewayresponse.header.Access-Control-Allow-Origin": "'https://video.deepfoundai.com'"
+        }
+    }
+]
+
+=== WORKING API ANALYSIS ===
+--- API: elu5mb5p45 ---
+Stage: v1
+{
+    "methodSettings": {}
+}
+
+--- API: o0fvahtccd ---
+Stage: v1
+{
+    "methodSettings": {}
+}
+
+=== INVESTIGATION COMPLETE ===
+Completed at: Sun Jun 22 14:45:03 EDT 2025

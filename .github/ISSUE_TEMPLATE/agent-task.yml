@@ -1,0 +1,50 @@
+name: "🛠️ Agent Task"
+description: "File work for a specific autonomous agent"
+labels: [Work, To-Do]
+body:
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Assigned Agent
+      description: "Which autonomous agent should handle this task?"
+      options:
+        - DevOpsAutomation
+        - CostSentinel
+        - FalInvoker
+        - RoutingManager
+        - PromptCurator
+        - CreditReconciler
+        - DocRegistry
+        - MrrReporter
+    validations: 
+      required: true
+
+  - type: textarea
+    id: spec
+    attributes:
+      label: What should the agent do?
+      description: "Provide bullets or mini-spec the agent can act on autonomously"
+      placeholder: |
+        • Verify admin Lambda 502 error logs
+        • Redeploy via deployLambda action
+        • Monitor deployment success
+        • Report back with status
+    validations:
+      required: true
+
+  - type: input
+    id: deadline
+    attributes:
+      label: Deadline (ISO-8601 or 'none')
+      description: "When should this task be completed?"
+      placeholder: "2025-06-30T23:00:00Z"
+      value: "none"
+
+  - type: textarea
+    id: deps
+    attributes:
+      label: Dependencies (issue # or URLs)
+      description: "Link other issues that must finish first (optional)"
+      placeholder: |
+        • #123 - API authentication must be fixed first
+        • https://github.com/org/repo/issues/456 - Database migration 

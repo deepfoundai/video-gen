@@ -1,0 +1,82 @@
+name: "Close Issues on Agent Completion"
+
+on:
+  schedule:
+    # Check for completed tasks every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: 'Specific requestId to close (optional)'
+        required: false
+
+jobs:
+  close-completed-tasks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Check for completed agent tasks
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_REQUEST_ID: ${{ github.event.inputs.request_id }}
+        run: |
+          # Get recent completion events from CloudWatch Logs
+          # Look for devops.completed events in the last 10 minutes
+          START_TIME=$(($(date +%s) - 600))000  # 10 minutes ago in milliseconds
+          
+          # Search DevOps Automation logs for completion events
+          COMPLETIONS=$(aws logs filter-log-events \
+            --log-group-name "/aws/lambda/cc-agent-devops-automation-prod" \
+            --start-time $START_TIME \
+            --filter-pattern "devops.completed" \
+            --query 'events[*].message' \
+            --output text || echo "")
+          
+          # Also check other agent logs for completion patterns
+          for AGENT in "cc-agent-cost-sentinel" "cc-agent-fal-invoker" "cc-agent-routing-manager" "cc-agent-prompt-curator"; do
+            AGENT_COMPLETIONS=$(aws logs filter-log-events \
+              --log-group-name "/aws/lambda/${AGENT}-prod" \
+              --start-time $START_TIME \
+              --filter-pattern "\"task completed\"" \
+              --query 'events[*].message' \
+              --output text 2>/dev/null || echo "")
+            COMPLETIONS="$COMPLETIONS $AGENT_COMPLETIONS"
+          done
+          
+          # If manual request ID provided, just process that one
+          if [ -n "$MANUAL_REQUEST_ID" ]; then
+            echo "Processing manual request: $MANUAL_REQUEST_ID"
+            ISSUE_NUM=$(echo "$MANUAL_REQUEST_ID" | sed 's/issue-//')
+            gh issue close $ISSUE_NUM -c "✅ Completed by agent (manual trigger)" -R ${{ github.repository }}
+            exit 0
+          fi
+          
+          # Parse completion events and close corresponding issues
+          echo "$COMPLETIONS" | while IFS= read -r line; do
+            if [ -n "$line" ] && echo "$line" | grep -q "issue-"; then
+              # Extract issue number from requestId format "issue-123"
+              REQUEST_ID=$(echo "$line" | grep -o 'issue-[0-9]\+' | head -1)
+              if [ -n "$REQUEST_ID" ]; then
+                ISSUE_NUM=$(echo "$REQUEST_ID" | sed 's/issue-//')
+                AGENT_NAME=$(echo "$line" | grep -o '"agent":"[^"]*"' | cut -d'"' -f4 || echo "agent")
+                
+                echo "Closing issue #$ISSUE_NUM for completion by $AGENT_NAME"
+                
+                # Close the issue with a simple completion comment
+                gh issue close $ISSUE_NUM \
+                  -c "✅ Task completed by **$AGENT_NAME** at $(date -u '+%Y-%m-%d %H:%M:%S UTC'). This issue was automatically closed by the agent work-order system." \
+                  -R ${{ github.repository }} || echo "Failed to close issue #$ISSUE_NUM"
+              fi
+            fi
+          done
+          
+          echo "✅ Completed issue closure check" 

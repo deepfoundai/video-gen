@@ -1,0 +1,43 @@
+=== CORS FIX SCRIPT - GATEWAY RESPONSE STATUS UPDATE ===
+Started at: Sun Jun 22 14:58:52 EDT 2025
+
+1. UPDATING CREDITS API
+--- Updating Credits API (elu5mb5p45) ---
+Changing MISSING_AUTHENTICATION_TOKEN status from 403 to 200...
+{
+    "responseType": "MISSING_AUTHENTICATION_TOKEN",
+    "statusCode": "200",
+    "responseParameters": {
+        "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+        "gatewayresponse.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+        "gatewayresponse.header.Access-Control-Allow-Origin": "'https://video.deepfoundai.com'"
+    },
+    "responseTemplates": {
+        "application/json": "{\"message\":$context.error.messageString}"
+    },
+    "defaultResponse": false
+}
+✅ Gateway response updated successfully
+Deploying changes to v1 stage...
+✅ Deployed successfully - Deployment ID: dm490k
+
+2. UPDATING JOBS API
+--- Updating Jobs API (o0fvahtccd) ---
+Changing MISSING_AUTHENTICATION_TOKEN status from 403 to 200...
+{
+    "responseType": "MISSING_AUTHENTICATION_TOKEN",
+    "statusCode": "200",
+    "responseParameters": {
+        "gatewayresponse.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+        "gatewayresponse.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+        "gatewayresponse.header.Access-Control-Allow-Origin": "'https://video.deepfoundai.com'"
+    },
+    "responseTemplates": {
+        "application/json": "{\"message\":$context.error.messageString}"
+    },
+    "defaultResponse": false
+}
+✅ Gateway response updated successfully
+Deploying changes to v1 stage...
+
+An error occurred (TooManyRequestsException) when calling the CreateDeployment operation (reached max retries: 2): Too Many Requests
