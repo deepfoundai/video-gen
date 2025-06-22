@@ -6,7 +6,7 @@
 • Report any agents that haven't checked in recently
 • Generate a summary of agent status
 
-**Deadline**: 
+**Deadline**: 2025-06-23T23:01:13Z
 
 **Dependencies**: 
 None for this test

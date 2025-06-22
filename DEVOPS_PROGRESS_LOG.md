@@ -20,12 +20,91 @@ Both video and admin frontends are failing with authentication errors:
 
 **Fix Applied**:
 1. ✅ Updated frontend .env to use correct API stage paths:
-   - `PUBLIC_CREDITS_API_URL=https://elu5mb5p45.execute-api.us-east-1.amazonaws.com/v1/v1`
-   - `PUBLIC_JOBS_API_URL=https://o0fvahtccd.execute-api.us-east-1.amazonaws.com/v1/v1`
+   - `PUBLIC_CREDITS_API_URL=https://elu5mb5p45.execute-api.us-east-1.amazonaws.com/v1/v1` (Working ✓)
+   - `PUBLIC_JOBS_API_URL=https://o0fvahtccd.execute-api.us-east-1.amazonaws.com/v1` (Authentication issue)
 
 2. ✅ Rebuilt and deployed frontend to S3/CloudFront
 
-**Next Steps**: Need to configure API Gateway to accept Cognito Bearer tokens instead of AWS IAM
+3. ✅ Credits API is now working - returning balance correctly
+
+4. ❌ Jobs API still has authentication issues - API Gateway expecting AWS IAM instead of Bearer tokens
+
+**Investigation Results**:
+- Jobs API configured with `authorizationType: NONE` but still rejecting Bearer tokens
+- Error suggests API Gateway is enforcing AWS Signature V4 authentication
+- Created POST /v1/jobs endpoint and linked to jobs-submit-api Lambda
+- Lambda function works correctly when invoked directly
+
+**Workaround Attempted**:
+- Created Lambda Function URL for direct access
+- URL: https://yc22cytxhli3x4g2rlpb7uz56m0npofv.lambda-url.us-east-1.on.aws/
+- Issue: Lambda handler misconfigured (looking for lambda_function instead of jobs-submit-lambda)
+
+**Next Steps**: 
+1. Fix Lambda handler configuration for jobs-submit-api
+2. Consider using Lambda Function URLs as alternative to API Gateway
+3. Or recreate Jobs API Gateway from scratch without authentication
+
+### Update (19:05 EST)
+
+**✅ PARTIAL SUCCESS - Job Submission Working!**
+
+1. **Root Cause Found**: Frontend was sending `duration_seconds` but Lambda expected `seconds`
+2. **Fix Applied**: Updated frontend to send correct field name
+3. **Status**: Job submission now returns 201 Created with job ID
+
+**Current Status**:
+- ✅ Credits API: Working perfectly (returns balance)
+- ✅ Jobs API: Now accepting POST requests and creating jobs (verified via cURL)
+- ✅ CORS: Properly configured for both APIs
+- ⚠️  Jobs API still using `/v1/v1/` double path (cosmetic issue)
+
+### Update (19:08 EST)
+
+**Browser Cache Issue**
+- CloudFront is serving updated code with correct field name
+- Direct API test confirms job submission works: `{"jobId": "722e7883-6712-4afa-80f6-75c77ba5e237", "status": "queued"}`
+- User needs to clear browser cache or hard refresh (Cmd+Shift+R on Mac, Ctrl+Shift+R on Windows)
+
+### Update (19:16 EST)
+
+**✅ COMPLETE FIX - All APIs Working!**
+
+**Root Cause**: API Gateway stage path issue - both APIs needed `/v1/v1` path structure
+
+**Final Fix Applied**:
+- Updated both API URLs to use double path:
+  - `PUBLIC_CREDITS_API_URL=https://elu5mb5p45.execute-api.us-east-1.amazonaws.com/v1/v1`
+  - `PUBLIC_JOBS_API_URL=https://o0fvahtccd.execute-api.us-east-1.amazonaws.com/v1/v1`
+
+**Current Status**:
+- ✅ Credits API: Working perfectly
+- ✅ Jobs API: Now working correctly 
+- ✅ Job submission returns proper job ID
+- ✅ CORS properly configured for both APIs
+
+**Remaining Tasks**:
+- Test job status polling and video generation workflow
+- Fix admin dashboard API endpoints (likely same issue)
+- Consider fixing the double `/v1/v1` path issue in API Gateway configuration
+
+### Update (19:18 EST)
+
+**New Issue Found - Missing Job Details API**
+
+**Problem**: Job details page shows "Invalid Date" and no job information
+
+**Root Cause**: No GET /jobs/{id} endpoint exists in API Gateway
+- Only POST /jobs for submission exists
+- No Lambda function for fetching individual job details
+- Frontend expects to poll job status but API doesn't support it
+
+**Required Fix**: Need to create:
+1. GET /v1/jobs/{id} endpoint in API Gateway
+2. Lambda function to fetch job details from DynamoDB
+3. Proper job status tracking and storage
+
+**Current Impact**: Users can submit jobs but cannot track their progress or see results
 
 ---
 
