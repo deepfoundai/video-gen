@@ -72,7 +72,7 @@ jobs:
           {
             "Entries": [
               {
-                "Source": "github.issues",
+                "Source": "agent.github",
                 "DetailType": "devops.request",
                 "Detail": {
                   "requestId": "issue-$ISSUE_NUMBER",
