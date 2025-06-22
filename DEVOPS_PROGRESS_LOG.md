@@ -1,6 +1,31 @@
-# DevOps Progress Log - Admin 502 Fix
+# DevOps Progress Log - Admin 502 Fix & Frontend API Issues
 **Started**: 2025-06-22 18:05 EST  
+**Updated**: 2025-06-22 18:54 EST
 **Agents**: DevOps-Debug → DevOps-Automation → QA → Cost-Sentinel
+
+---
+
+## 🔴 CRITICAL ISSUE DISCOVERED (18:54 EST)
+
+### Frontend API Authentication Errors
+Both video and admin frontends are failing with authentication errors:
+
+**Error**: `"Invalid key=value pair (missing equal-sign) in Authorization header"`
+
+**Root Cause**: API Gateway is expecting AWS IAM authentication but frontends are sending Bearer tokens
+
+**APIs Affected**:
+- Credits API: `https://elu5mb5p45.execute-api.us-east-1.amazonaws.com/v1`
+- Jobs API: `https://o0fvahtccd.execute-api.us-east-1.amazonaws.com/v1`
+
+**Fix Applied**:
+1. ✅ Updated frontend .env to use correct API stage paths:
+   - `PUBLIC_CREDITS_API_URL=https://elu5mb5p45.execute-api.us-east-1.amazonaws.com/v1/v1`
+   - `PUBLIC_JOBS_API_URL=https://o0fvahtccd.execute-api.us-east-1.amazonaws.com/v1/v1`
+
+2. ✅ Rebuilt and deployed frontend to S3/CloudFront
+
+**Next Steps**: Need to configure API Gateway to accept Cognito Bearer tokens instead of AWS IAM
 
 ---
 
