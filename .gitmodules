@@ -1,0 +1,15 @@
+[submodule "admin/cc-admin-dashboard"]
+	path = admin/cc-admin-dashboard
+	url = git@github.com-deepfound:deepfoundai/cc-admin-dashboard.git
+
+[submodule "frontend"]
+	path = frontend
+	url = git@github.com-deepfound:deepfoundai/cc-frontend.git
+
+[submodule "cc-billing-tiers"]
+	path = cc-billing-tiers
+	url = git@github.com-deepfound:deepfoundai/cc-billing-tiers.git
+
+[submodule "meta-agents"]
+	path = meta-agents
+	url = git@github.com-deepfound:deepfoundai/cc-meta-agents.git 
