@@ -32,8 +32,8 @@ jobs:
           # Extract agent (looks for the dropdown selection)
           AGENT=$(echo "$ISSUE_BODY" | grep -E "^\s*[A-Za-z]+\s*$" | head -1 | xargs || echo "")
           
-          # Extract spec (everything between "What should the agent do?" and next section)
-          SPEC=$(echo "$ISSUE_BODY" | sed -n '/What should the agent do?/,/Deadline/p' | sed '1d;$d' | grep -v "^$" | base64 -w0 || echo "")
+          # Extract full issue body as spec (don't truncate)
+          SPEC=$(printf "%s" "$ISSUE_BODY" | base64 -w0)
           
           # Extract deadline (looks for ISO date or "none")  
           DEADLINE=$(echo "$ISSUE_BODY" | grep -E "(none|[0-9]{4}-[0-9]{2}-[0-9]{2})" | head -1 | xargs || echo "none")
@@ -66,6 +66,25 @@ jobs:
           
           # Escape issue title for JSON
           ESCAPED_TITLE=$(echo "$ISSUE_TITLE" | sed 's/"/\\"/g' | sed "s/'/\\'/g")
+          
+          # Validate required fields for machine processing
+          echo "Validating event structure..."
+          if [ -z "$AGENT" ]; then
+            echo "❌ Error: Missing agent field"
+            exit 1
+          fi
+          
+          if [ -z "$SPEC" ]; then
+            echo "❌ Error: Missing work specification"
+            exit 1
+          fi
+          
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "❌ Error: Missing issue number"
+            exit 1
+          fi
+          
+          echo "✅ Event validation passed"
           
           # Create EventBridge event  
           cat > event.json << EOF
