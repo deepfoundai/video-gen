@@ -30,13 +30,13 @@ jobs:
           # GitHub issue templates create specific patterns we can parse
           
           # Extract agent from table format: | **agent** | DevOpsAutomation |
-          AGENT=$(echo "$ISSUE_BODY" | grep -E "\*\*agent\*\*" | sed 's/.*|\s*\*\*agent\*\*\s*|\s*\([^|]*\)\s*|.*/\1/' | xargs || echo "")
+          AGENT=$(echo "$ISSUE_BODY" | grep "agent.*|" | awk -F'|' '{print $3}' | xargs || echo "")
           
           # Extract full issue body as spec (don't truncate)
           SPEC=$(printf "%s" "$ISSUE_BODY" | base64 -w0)
           
           # Extract deadline from table format: | **deadline (UTC)** | 2025-06-28T00:00 |
-          DEADLINE=$(echo "$ISSUE_BODY" | grep -E "\*\*deadline.*\*\*" | sed 's/.*|\s*\*\*deadline[^|]*\*\*\s*|\s*\([^|]*\)\s*|.*/\1/' | xargs || echo "none")
+          DEADLINE=$(echo "$ISSUE_BODY" | grep "deadline.*|" | awk -F'|' '{print $3}' | xargs || echo "none")
           
           # Extract dependencies (everything after "Dependencies" section)
           DEPS=$(echo "$ISSUE_BODY" | sed -n '/Dependencies/,$p' | sed '1d' | grep -v "^$" | base64 -w0 || echo "")
