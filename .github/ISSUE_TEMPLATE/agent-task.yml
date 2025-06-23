@@ -1,0 +1,105 @@
+name: 🤖 Agent Task
+description: Create a work order for an autonomous agent
+title: "[AGENT] "
+labels: ["Work"]
+assignees: 
+  - todd-deepfound
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🤖 Agent Work Order
+        
+        Use this template to create work orders for autonomous agents in the deepfoundai ecosystem.
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Target Agent
+      description: Which agent should execute this work?
+      options:
+        - DevOpsAutomation
+        - CostSentinel
+        - CreditReconciler
+        - FalInvoker
+        - MRRReporter
+        - PromptCurator
+        - RoutingManager
+        - DocRegistry
+      default: 0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Environment
+      description: Which environment should this run in?
+      options:
+        - dev
+        - prod
+      default: 1
+    validations:
+      required: true
+
+  - type: input
+    id: deadline
+    attributes:
+      label: Deadline (UTC)
+      description: When should this work be completed? (Format: YYYY-MM-DDTHH:MM or 'none')
+      placeholder: "2025-06-28T23:59 or 'none'"
+    validations:
+      required: true
+
+  - type: textarea
+    id: specification
+    attributes:
+      label: Work Specification
+      description: Detailed description of what the agent should do
+      placeholder: |
+        ### What should the agent do?
+        
+        1. **First task**
+           * Specific details
+           * Requirements
+           
+        2. **Second task**
+           * More details
+           * Expected outcomes
+           
+        ### Done when
+        * Clear completion criteria
+        * Success measures
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Any prerequisites or dependencies for this work
+      placeholder: |
+        - Dependency 1: Description
+        - Dependency 2: Description
+        
+        Or write "none" if no dependencies.
+      render: markdown
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context & Notes
+      description: Additional context that might be helpful
+      placeholder: |
+        ### Context
+        - Background information
+        - Links to related work
+        - Security considerations
+        - Performance requirements
+      render: markdown
+    validations:
+      required: false 

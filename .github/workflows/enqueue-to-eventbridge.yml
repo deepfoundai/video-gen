@@ -1,0 +1,225 @@
+name: Process Agent Work Orders
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+  issue_comment:
+    types: [created]
+
+jobs:
+  process-work-order:
+    runs-on: ubuntu-latest
+    if: contains(github.event.issue.labels.*.name, 'Work') && github.event.issue.state == 'open'
+    
+    steps:
+    - name: Extract Issue Data
+      id: extract
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const issue = context.payload.issue;
+          const issueBody = issue.body || '';
+          
+          // Extract form data from GitHub issue template
+          const extractFormValue = (label, fallback = '') => {
+            const regex = new RegExp(`### ${label}\\s*\\n\\s*([\\s\\S]*?)\\n\\s*###`, 'i');
+            const match = issueBody.match(regex);
+            if (match) return match[1].trim();
+            
+            // Try alternative format
+            const altRegex = new RegExp(`${label}\\s*\\n\\s*([^\\n]+)`, 'i');
+            const altMatch = issueBody.match(altRegex);
+            return altMatch ? altMatch[1].trim() : fallback;
+          };
+          
+          // Extract dropdown/form values
+          const agent = extractFormValue('Target Agent|Agent') || 'DevOpsAutomation';
+          const stage = extractFormValue('Environment|Stage') || 'prod';
+          const deadline = extractFormValue('Deadline') || 'none';
+          const specification = extractFormValue('Work Specification|What should the agent do\\?') || issue.body;
+          const dependencies = extractFormValue('Dependencies') || 'none';
+          const context = extractFormValue('Context & Notes|Context') || '';
+          
+          // Create request ID from issue number and timestamp
+          const requestId = `issue-${issue.number}-${Date.now()}`;
+          
+          console.log('Extracted form data:', {
+            agent, stage, deadline, requestId,
+            specLength: specification.length,
+            depsLength: dependencies.length
+          });
+          
+          return {
+            agent,
+            stage, 
+            deadline,
+            specification,
+            dependencies,
+            context,
+            requestId,
+            issueNumber: issue.number,
+            issueTitle: issue.title,
+            issueUrl: issue.html_url
+          };
+
+    - name: Validate Work Order
+      id: validate
+      run: |
+        AGENT="${{ fromJson(steps.extract.outputs.result).agent }}"
+        STAGE="${{ fromJson(steps.extract.outputs.result).stage }}"
+        SPEC="${{ fromJson(steps.extract.outputs.result).specification }}"
+        
+        echo "Validating work order..."
+        echo "Agent: $AGENT"
+        echo "Stage: $STAGE"
+        echo "Spec length: ${#SPEC}"
+        
+        # Validate required fields
+        if [ -z "$AGENT" ] || [ -z "$STAGE" ] || [ -z "$SPEC" ]; then
+          echo "ERROR: Missing required fields"
+          exit 1
+        fi
+        
+        # Validate agent name
+        case "$AGENT" in
+          DevOpsAutomation|CostSentinel|CreditReconciler|FalInvoker|MRRReporter|PromptCurator|RoutingManager|DocRegistry)
+            echo "✅ Valid agent: $AGENT"
+            ;;
+          *)
+            echo "ERROR: Invalid agent: $AGENT"
+            exit 1
+            ;;
+        esac
+        
+        # Validate stage
+        case "$STAGE" in
+          dev|prod)
+            echo "✅ Valid stage: $STAGE"
+            ;;
+          *)
+            echo "ERROR: Invalid stage: $STAGE"
+            exit 1
+            ;;
+        esac
+        
+        echo "✅ Work order validation passed"
+
+    - name: Encode Specification
+      id: encode
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const data = ${{ steps.extract.outputs.result }};
+          
+          // Base64 encode the specification and dependencies for safe transport
+          const specBase64 = Buffer.from(data.specification).toString('base64');
+          const depsBase64 = Buffer.from(data.dependencies || '').toString('base64');
+          
+          return {
+            ...data,
+            specBase64,
+            depsBase64
+          };
+
+    - name: Send to EventBridge
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.AWS_REGION || 'us-east-1' }}
+      run: |
+        DATA='${{ steps.encode.outputs.result }}'
+        AGENT=$(echo "$DATA" | jq -r '.agent')
+        STAGE=$(echo "$DATA" | jq -r '.stage')
+        REQUEST_ID=$(echo "$DATA" | jq -r '.requestId')
+        DEADLINE=$(echo "$DATA" | jq -r '.deadline')
+        SPEC_B64=$(echo "$DATA" | jq -r '.specBase64')
+        DEPS_B64=$(echo "$DATA" | jq -r '.depsBase64')
+        ISSUE_NUMBER=$(echo "$DATA" | jq -r '.issueNumber')
+        ISSUE_TITLE=$(echo "$DATA" | jq -r '.issueTitle')
+        ISSUE_URL=$(echo "$DATA" | jq -r '.issueUrl')
+        
+        # Create EventBridge event
+        EVENT_DETAIL=$(cat <<EOF
+        {
+          "requestId": "$REQUEST_ID",
+          "action": "agentWork",
+          "stage": "$STAGE",
+          "requestedBy": "GitHubCI",
+          "agent": "$AGENT",
+          "payload": {
+            "spec": "$SPEC_B64",
+            "deadline": "$DEADLINE",
+            "deps": "$DEPS_B64",
+            "issueNumber": "$ISSUE_NUMBER",
+            "issueTitle": "$ISSUE_TITLE",
+            "issueUrl": "$ISSUE_URL"
+          },
+          "ts": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        }
+        EOF
+        )
+        
+        echo "Sending work order to EventBridge..."
+        echo "Request ID: $REQUEST_ID"
+        echo "Agent: $AGENT"
+        echo "Stage: $STAGE"
+        
+        # Send event to EventBridge
+        aws events put-events \
+          --entries "[{
+            \"Source\": \"github.issues\",
+            \"DetailType\": \"devops.request\",
+            \"Detail\": \"$EVENT_DETAIL\"
+          }]"
+        
+        echo "✅ Work order sent to EventBridge successfully"
+
+    - name: Add Processing Comment
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const data = ${{ steps.encode.outputs.result }};
+          
+          const comment = `## 🤖 Work Order Processed
+          
+          **Request ID:** \`${data.requestId}\`  
+          **Agent:** ${data.agent}  
+          **Stage:** ${data.stage}  
+          **Status:** ✅ Sent to EventBridge
+          
+          The work order has been successfully queued for processing. The agent will begin work shortly and update this issue when complete.
+          
+          ---
+          *This issue will automatically close when the agent completes the work.*`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+    - name: Handle Errors
+      if: failure()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const comment = `## ⚠️ Work Order Processing Failed
+          
+          There was an error processing this work order. Please check:
+          
+          - [ ] All required fields are filled out correctly
+          - [ ] Agent name is valid (DevOpsAutomation, CostSentinel, etc.)
+          - [ ] Stage is either 'dev' or 'prod'
+          - [ ] Work specification is clear and actionable
+          
+          **Error Details:** Check the workflow logs for specific error messages.
+          
+          Please edit the issue to fix any problems and try again.`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          }); 

@@ -1,0 +1,187 @@
+name: Auto-Close Completed Work Orders
+
+on:
+  schedule:
+    # Check for completed work orders every 5 minutes
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      lookback_hours:
+        description: 'Hours to look back for completion events'
+        required: false
+        default: '1'
+        type: string
+
+jobs:
+  close-completed-issues:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+    - name: Check for completed work orders
+      id: check-completions
+      run: |
+        # Look back for completion events in CloudWatch logs
+        LOOKBACK_HOURS="${{ github.event.inputs.lookback_hours || '1' }}"
+        START_TIME=$(date -d "${LOOKBACK_HOURS} hours ago" +%s)000
+        
+        echo "Checking for completion events since $(date -d "${LOOKBACK_HOURS} hours ago")"
+        
+        # Check DevOpsAutomation agent logs for completion events
+        COMPLETED_REQUESTS=$(aws logs filter-log-events \
+          --log-group-name "/aws/lambda/cc-agent-devops-automation-prod" \
+          --start-time $START_TIME \
+          --filter-pattern "completion event" \
+          --query 'events[*].message' \
+          --output text | grep -E "issue-[0-9]+" | sed 's/.*request //' | sed 's/Published completion event for request //' | sort | uniq)
+        
+        echo "Found completed requests:"
+        echo "$COMPLETED_REQUESTS"
+        
+        # Convert to JSON array for GitHub Actions
+        COMPLETED_ARRAY="[]"
+        if [ ! -z "$COMPLETED_REQUESTS" ]; then
+          COMPLETED_ARRAY=$(echo "$COMPLETED_REQUESTS" | jq -R -s 'split("\n") | map(select(length > 0))')
+        fi
+        
+        echo "completed_requests=$COMPLETED_ARRAY" >> $GITHUB_OUTPUT
+        echo "Total completed requests: $(echo "$COMPLETED_ARRAY" | jq 'length')"
+
+    - name: Close completed issues
+      if: ${{ fromJson(steps.check-completions.outputs.completed_requests) != '[]' }}
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const completedRequests = ${{ steps.check-completions.outputs.completed_requests }};
+          
+          console.log('Processing completed requests:', completedRequests);
+          
+          for (const requestId of completedRequests) {
+            console.log(`Processing request: ${requestId}`);
+            
+            // Extract issue number from request ID (format: issue-123-timestamp)
+            const issueMatch = requestId.match(/issue-(\d+)-/);
+            if (!issueMatch) {
+              console.log(`Could not extract issue number from request ID: ${requestId}`);
+              continue;
+            }
+            
+            const issueNumber = parseInt(issueMatch[1]);
+            console.log(`Extracted issue number: ${issueNumber}`);
+            
+            try {
+              // Get issue details first
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber
+              });
+              
+              // Check if issue is still open and has Work label
+              if (issue.data.state === 'open' && issue.data.labels.some(label => label.name === 'Work')) {
+                console.log(`Closing issue #${issueNumber}: ${issue.data.title}`);
+                
+                // Add completion comment
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `## ✅ Work Order Completed
+                  
+                  **Request ID:** \`${requestId}\`  
+                  **Status:** Work completed successfully by agent
+                  **Completed:** ${new Date().toISOString()}
+                  
+                  The assigned agent has successfully completed this work order. Check the CloudWatch logs for detailed execution results.
+                  
+                  Automatically closing this issue.`
+                });
+                
+                // Close the issue
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  state: 'closed',
+                  labels: [...issue.data.labels.map(l => l.name), 'Completed']
+                });
+                
+                console.log(`✅ Successfully closed issue #${issueNumber}`);
+                
+              } else {
+                console.log(`Issue #${issueNumber} is already closed or doesn't have Work label`);
+              }
+              
+            } catch (error) {
+              console.error(`Error processing issue #${issueNumber}:`, error.message);
+              
+              // If issue doesn't exist, that's OK - maybe it was already closed manually
+              if (error.status === 404) {
+                console.log(`Issue #${issueNumber} not found - may have been deleted or is in different repo`);
+              } else {
+                // For other errors, we should probably alert someone
+                console.error(`Unexpected error closing issue #${issueNumber}:`, error);
+              }
+            }
+          }
+
+    - name: Clean up old work orders
+      uses: actions/github-script@v6
+      with:
+        script: |
+          // Find work orders older than 7 days that are still open
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+          
+          const issues = await github.rest.issues.listForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            state: 'open',
+            labels: 'Work',
+            since: sevenDaysAgo.toISOString(),
+            per_page: 100
+          });
+          
+          const oldIssues = issues.data.filter(issue => {
+            const created = new Date(issue.created_at);
+            return created < sevenDaysAgo;
+          });
+          
+          if (oldIssues.length > 0) {
+            console.log(`Found ${oldIssues.length} old work orders (>7 days)`);
+            
+            for (const issue of oldIssues) {
+              console.log(`Commenting on old issue #${issue.number}: ${issue.title}`);
+              
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `## ⚠️ Long-Running Work Order
+                
+                This work order has been open for more than 7 days. Please check:
+                
+                - [ ] Is the agent still working on this task?
+                - [ ] Are there any blockers preventing completion?
+                - [ ] Should this work order be reassigned or cancelled?
+                - [ ] Check CloudWatch logs for any error messages
+                
+                Consider closing this issue if the work is no longer needed or creating a new issue with updated requirements.`
+              });
+            }
+          } else {
+            console.log('No old work orders found');
+          }
+
+    - name: Report summary
+      run: |
+        echo "## Auto-Close Summary"
+        echo "- Completed requests processed: $(echo '${{ steps.check-completions.outputs.completed_requests }}' | jq 'length')"
+        echo "- Lookback period: ${{ github.event.inputs.lookback_hours || '1' }} hours"
+        echo "- Timestamp: $(date)" 
