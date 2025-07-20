@@ -6,7 +6,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Admin Dashboard - Raw</title>
-    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1752981251"></script>
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1752983945"></script>
     <style>
         body { font-family: monospace; margin: 20px; background: #f0f0f0; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -137,7 +137,8 @@ window.addEventListener('DOMContentLoaded', function() {
         const savedToken = localStorage.getItem('adminToken');
         if (savedToken) {
             authToken = savedToken;
-            showMainSection();
+            // Verify token is still valid
+            checkTokenAndShowMain();
         }
     } catch (error) {
         console.error('Failed to initialize Cognito:', error);
@@ -206,6 +207,32 @@ function logout() {
     
     if (autoRefreshInterval) {
         clearInterval(autoRefreshInterval);
+    }
+}
+
+// Check token validity and show main section
+async function checkTokenAndShowMain() {
+    try {
+        // Try a simple API call to verify token
+        const response = await fetch(`${JOBS_API}/jobs`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            showMainSection();
+        } else {
+            // Token expired, clear and show login
+            console.log('Token expired, please login again');
+            localStorage.removeItem('adminToken');
+            authToken = null;
+        }
+    } catch (error) {
+        console.error('Token check failed:', error);
+        localStorage.removeItem('adminToken');
+        authToken = null;
     }
 }
 
