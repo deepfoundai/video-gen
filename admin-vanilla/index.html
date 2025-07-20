@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Admin Dashboard - Raw</title>
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1752981251"></script>
+    <style>
+        body { font-family: monospace; margin: 20px; background: #f0f0f0; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { background: white; padding: 20px; margin: 20px 0; border: 1px solid #ccc; }
+        h1, h2 { margin: 0 0 10px 0; }
+        button { padding: 10px; margin: 5px; cursor: pointer; }
+        input, select { padding: 5px; margin: 5px; }
+        pre { background: #f5f5f5; padding: 10px; overflow: auto; max-height: 600px; }
+        .error { color: red; font-weight: bold; }
+        .success { color: green; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #e0e0e0; }
+        .status-QUEUED { color: purple; }
+        .status-PROCESSING { color: orange; }
+        .status-COMPLETED { color: green; }
+        .status-FAILED { color: red; }
+        #loginSection { display: block; }
+        #mainSection { display: none; }
+        .job-details { font-size: 12px; margin-top: 10px; }
+        .logs-section { margin-top: 20px; padding: 10px; background: #f5f5f5; }
+        .log-entry { font-family: monospace; font-size: 12px; margin: 2px 0; }
+        .log-ERROR { color: red; }
+        .log-WARNING { color: orange; }
+        .log-INFO { color: black; }
+        .modal { display: none; position: fixed; z-index: 1; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
+        .modal-content { background-color: #fefefe; margin: 5% auto; padding: 20px; border: 1px solid #888; width: 80%; max-height: 80vh; overflow-y: auto; }
+        .close { color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer; }
+        .close:hover { color: black; }
+        .clickable { cursor: pointer; color: #0066cc; text-decoration: underline; }
+        .clickable:hover { color: #0044aa; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Admin Dashboard - Raw View</h1>
+    
+    <div id="loginSection" class="section">
+        <h2>Login</h2>
+        <input type="email" id="email" placeholder="Email" value="admin.test@deepfoundai.com">
+        <input type="password" id="password" placeholder="Password" value="AdminTest123!">
+        <button onclick="login()">Login</button>
+        <div id="loginMessage"></div>
+    </div>
+    
+    <div id="mainSection">
+        <div class="section">
+            <h2>User Info</h2>
+            <div id="userInfo"></div>
+            <button onclick="logout()">Logout</button>
+        </div>
+        
+        <div class="section">
+            <h2>Jobs - Raw Data</h2>
+            <button onclick="loadJobs()">Refresh Jobs</button>
+            <button onclick="toggleAutoRefresh()">Toggle Auto-Refresh: <span id="autoRefreshStatus">OFF</span></button>
+            <select id="statusFilter" onchange="loadJobs()">
+                <option value="">All Statuses</option>
+                <option value="QUEUED">QUEUED</option>
+                <option value="PROCESSING">PROCESSING</option>
+                <option value="COMPLETED">COMPLETED</option>
+                <option value="FAILED">FAILED</option>
+            </select>
+            <div id="jobsStats"></div>
+            <div id="jobsError" class="error"></div>
+            <div id="jobsTable"></div>
+            <h3>Raw JSON Response:</h3>
+            <pre id="jobsRaw"></pre>
+        </div>
+        
+        <div class="section">
+            <h2>Test Job Submission</h2>
+            <input type="text" id="testPrompt" placeholder="Test prompt" value="Admin test video">
+            <select id="testDuration">
+                <option value="2">2 seconds</option>
+                <option value="5">5 seconds</option>
+            </select>
+            <button onclick="submitTestJob()">Submit Test Job</button>
+            <div id="submitMessage"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Debug Info</h2>
+            <button onclick="showDebugInfo()">Show Debug Info</button>
+            <pre id="debugInfo"></pre>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for displaying logs -->
+<div id="logsModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeLogs()">&times;</span>
+        <h2>Job Logs - <span id="logsJobId"></span></h2>
+        <div id="logsLoading">Loading logs...</div>
+        <div id="logsError" class="error"></div>
+        <div id="logsContent" style="display: none;">
+            <div id="logsStats"></div>
+            <div class="logs-section">
+                <div id="logsList"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Configuration
+const COGNITO_CONFIG = {
+    UserPoolId: 'us-east-1_q9cVE7WTT',
+    ClientId: '7paapnr8fbkanimk5bgpriagmg'
+};
+
+const JOBS_API = 'https://l3erksseb4.execute-api.us-east-1.amazonaws.com/prod/v1';
+
+// State
+let userPool = null;
+let currentUser = null;
+let authToken = null;
+let autoRefreshInterval = null;
+
+// Initialize after page loads
+window.addEventListener('DOMContentLoaded', function() {
+    try {
+        userPool = new AmazonCognitoIdentity.CognitoUserPool(COGNITO_CONFIG);
+        console.log('Cognito initialized successfully');
+        
+        // Check for existing session
+        const savedToken = localStorage.getItem('adminToken');
+        if (savedToken) {
+            authToken = savedToken;
+            showMainSection();
+        }
+    } catch (error) {
+        console.error('Failed to initialize Cognito:', error);
+        document.getElementById('loginMessage').innerHTML = '<span class="error">Failed to initialize authentication</span>';
+    }
+});
+
+// Login function
+async function login() {
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+    const messageDiv = document.getElementById('loginMessage');
+    
+    if (!userPool) {
+        messageDiv.innerHTML = '<span class="error">Authentication not initialized. Please refresh the page.</span>';
+        return;
+    }
+    
+    messageDiv.textContent = 'Logging in...';
+    
+    try {
+        const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({
+            Username: email,
+            Password: password
+        });
+        
+        const cognitoUser = new AmazonCognitoIdentity.CognitoUser({
+            Username: email,
+            Pool: userPool
+        });
+        
+        cognitoUser.authenticateUser(authDetails, {
+            onSuccess: (result) => {
+                currentUser = cognitoUser;
+                // Use ID token for API calls
+                authToken = result.getIdToken().getJwtToken();
+                
+                // Store in localStorage
+                localStorage.setItem('adminToken', authToken);
+                localStorage.setItem('adminEmail', email);
+                
+                messageDiv.innerHTML = '<span class="success">Login successful!</span>';
+                showMainSection();
+            },
+            onFailure: (err) => {
+                messageDiv.innerHTML = `<span class="error">Login failed: ${err.message}</span>`;
+            }
+        });
+    } catch (error) {
+        messageDiv.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+    }
+}
+
+// Logout function
+function logout() {
+    if (currentUser) {
+        currentUser.signOut();
+    }
+    localStorage.removeItem('adminToken');
+    localStorage.removeItem('adminEmail');
+    authToken = null;
+    currentUser = null;
+    
+    document.getElementById('loginSection').style.display = 'block';
+    document.getElementById('mainSection').style.display = 'none';
+    
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+    }
+}
+
+// Show main section
+function showMainSection() {
+    document.getElementById('loginSection').style.display = 'none';
+    document.getElementById('mainSection').style.display = 'block';
+    
+    const email = localStorage.getItem('adminEmail') || 'Unknown';
+    document.getElementById('userInfo').innerHTML = `
+        <strong>Logged in as:</strong> ${email}<br>
+        <strong>Token:</strong> ${authToken ? authToken.substring(0, 50) + '...' : 'None'}
+    `;
+    
+    loadJobs();
+}
+
+// Load jobs
+async function loadJobs() {
+    const errorDiv = document.getElementById('jobsError');
+    const tableDiv = document.getElementById('jobsTable');
+    const rawDiv = document.getElementById('jobsRaw');
+    const statsDiv = document.getElementById('jobsStats');
+    
+    errorDiv.textContent = '';
+    tableDiv.innerHTML = 'Loading...';
+    
+    try {
+        // Try admin endpoint first, fall back to regular endpoint
+        let response = await fetch(`${JOBS_API}/admin/jobs`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        let endpoint = 'admin/jobs';
+        
+        // If admin endpoint fails, try regular endpoint
+        if (!response.ok) {
+            console.log('Admin endpoint failed, trying regular endpoint...');
+            response = await fetch(`${JOBS_API}/jobs`, {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            endpoint = 'jobs';
+        }
+        
+        const responseText = await response.text();
+        
+        // Check if we got HTML instead of JSON
+        if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
+            throw new Error('Received HTML instead of JSON - authentication or routing issue');
+        }
+        
+        const data = JSON.parse(responseText);
+        
+        // Display raw JSON
+        rawDiv.textContent = JSON.stringify(data, null, 2);
+        
+        // Extract jobs array from response
+        const jobs = data.jobs || data || [];
+        
+        // Apply status filter
+        const statusFilter = document.getElementById('statusFilter').value;
+        const filteredJobs = statusFilter ? 
+            jobs.filter(job => job.status === statusFilter) : 
+            jobs;
+        
+        // Calculate stats
+        const stats = {
+            total: jobs.length,
+            queued: jobs.filter(j => j.status === 'QUEUED').length,
+            processing: jobs.filter(j => j.status === 'PROCESSING').length,
+            completed: jobs.filter(j => j.status === 'COMPLETED').length,
+            failed: jobs.filter(j => j.status === 'FAILED').length
+        };
+        
+        statsDiv.innerHTML = `
+            <strong>Stats:</strong> 
+            Total: ${stats.total} | 
+            Queued: ${stats.queued} | 
+            Processing: ${stats.processing} | 
+            Completed: ${stats.completed} | 
+            Failed: ${stats.failed} |
+            Endpoint: ${endpoint}
+        `;
+        
+        // Display jobs in table
+        if (filteredJobs.length === 0) {
+            tableDiv.innerHTML = '<p>No jobs found</p>';
+            return;
+        }
+        
+        let html = '<table><tr><th>Job ID</th><th>Status</th><th>User</th><th>Created</th><th>Prompt</th><th>Actions</th></tr>';
+        
+        filteredJobs.forEach(job => {
+            const jobId = job.jobId || job.id || 'N/A';
+            html += `<tr>
+                <td><span class="clickable" onclick="showJobLogs('${jobId}')">${jobId}</span></td>
+                <td class="status-${job.status}">${job.status}</td>
+                <td>${job.user_id || job.userId || 'N/A'}</td>
+                <td>${job.createdAt ? new Date(job.createdAt).toLocaleString() : 'N/A'}</td>
+                <td>${job.prompt || 'N/A'}</td>
+                <td>
+                    <button onclick="showJobDetails('${encodeURIComponent(JSON.stringify(job))}')">Details</button>
+                    <button onclick="showJobLogs('${jobId}')">Logs</button>
+                    ${job.outputUrl ? `<a href="${job.outputUrl}" target="_blank">Video</a>` : ''}
+                </td>
+            </tr>`;
+        });
+        
+        html += '</table>';
+        tableDiv.innerHTML = html;
+        
+    } catch (error) {
+        errorDiv.textContent = `Error: ${error.message}`;
+        tableDiv.innerHTML = '';
+        rawDiv.textContent = `Error loading jobs: ${error.message}\n\nStack: ${error.stack}`;
+    }
+}
+
+// Show job details
+function showJobDetails(encodedJob) {
+    try {
+        const job = JSON.parse(decodeURIComponent(encodedJob));
+        alert(JSON.stringify(job, null, 2));
+    } catch (error) {
+        alert('Error showing job details: ' + error.message);
+    }
+}
+
+// Submit test job
+async function submitTestJob() {
+    const prompt = document.getElementById('testPrompt').value;
+    const duration = parseInt(document.getElementById('testDuration').value);
+    const messageDiv = document.getElementById('submitMessage');
+    
+    messageDiv.innerHTML = 'Submitting...';
+    
+    try {
+        const response = await fetch(`${JOBS_API}/jobs`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                prompt: prompt,
+                seconds: duration,
+                resolution: '720p',
+                provider: 'auto'
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            messageDiv.innerHTML = `<span class="success">Job submitted! ID: ${data.jobId || data.job_id || data.id}</span>`;
+            setTimeout(() => loadJobs(), 2000);
+        } else {
+            messageDiv.innerHTML = `<span class="error">Failed: ${JSON.stringify(data)}</span>`;
+        }
+    } catch (error) {
+        messageDiv.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+    }
+}
+
+// Toggle auto refresh
+function toggleAutoRefresh() {
+    const statusSpan = document.getElementById('autoRefreshStatus');
+    
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+        statusSpan.textContent = 'OFF';
+    } else {
+        autoRefreshInterval = setInterval(() => loadJobs(), 5000);
+        statusSpan.textContent = 'ON';
+    }
+}
+
+// Show job logs
+async function showJobLogs(jobId) {
+    const modal = document.getElementById('logsModal');
+    const loadingDiv = document.getElementById('logsLoading');
+    const errorDiv = document.getElementById('logsError');
+    const contentDiv = document.getElementById('logsContent');
+    const logsListDiv = document.getElementById('logsList');
+    const statsDiv = document.getElementById('logsStats');
+    
+    // Show modal and reset state
+    modal.style.display = 'block';
+    loadingDiv.style.display = 'block';
+    errorDiv.textContent = '';
+    contentDiv.style.display = 'none';
+    document.getElementById('logsJobId').textContent = jobId;
+    
+    try {
+        console.log('Fetching logs for job:', jobId);
+        console.log('Auth token:', authToken ? authToken.substring(0, 50) + '...' : 'None');
+        console.log('API URL:', `${JOBS_API}/jobs/${jobId}/logs`);
+        
+        const response = await fetch(`${JOBS_API}/jobs/${jobId}/logs`, {
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to fetch logs: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        // Display stats
+        const errorCount = data.logs.filter(log => log.level === 'ERROR').length;
+        const warningCount = data.logs.filter(log => log.level === 'WARNING').length;
+        const infoCount = data.logs.filter(log => log.level === 'INFO').length;
+        
+        statsDiv.innerHTML = `
+            <strong>Status:</strong> ${data.status} | 
+            <strong>Total Logs:</strong> ${data.logs.length} | 
+            <strong>Errors:</strong> ${errorCount} | 
+            <strong>Warnings:</strong> ${warningCount} | 
+            <strong>Info:</strong> ${infoCount}
+        `;
+        
+        // Display logs
+        let logsHtml = '';
+        data.logs.forEach(log => {
+            const timestamp = log.timestamp ? new Date(log.timestamp).toLocaleString() : 'N/A';
+            logsHtml += `
+                <div class="log-entry log-${log.level}">
+                    <strong>[${timestamp}]</strong> 
+                    <span style="color: #666;">[${log.source}]</span> 
+                    <span class="log-${log.level}">[${log.level}]</span> 
+                    ${escapeHtml(log.message)}
+                </div>
+            `;
+        });
+        
+        if (data.logs.length === 0) {
+            logsHtml = '<div class="log-entry">No logs found for this job</div>';
+        }
+        
+        logsListDiv.innerHTML = logsHtml;
+        
+        // Show content, hide loading
+        loadingDiv.style.display = 'none';
+        contentDiv.style.display = 'block';
+        
+    } catch (error) {
+        errorDiv.textContent = `Error: ${error.message}`;
+        loadingDiv.style.display = 'none';
+    }
+}
+
+// Close logs modal
+function closeLogs() {
+    document.getElementById('logsModal').style.display = 'none';
+}
+
+// Escape HTML for safe display
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Show debug info
+function showDebugInfo() {
+    const debugDiv = document.getElementById('debugInfo');
+    
+    const info = {
+        authToken: authToken ? `${authToken.substring(0, 50)}...` : 'None',
+        localStorage: {
+            adminToken: localStorage.getItem('adminToken') ? 'Present' : 'None',
+            adminEmail: localStorage.getItem('adminEmail') || 'None'
+        },
+        cognitoStorage: {}
+    };
+    
+    // Get all Cognito storage
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key.includes('CognitoIdentityServiceProvider')) {
+            info.cognitoStorage[key] = localStorage.getItem(key).substring(0, 50) + '...';
+        }
+    }
+    
+    debugDiv.textContent = JSON.stringify(info, null, 2);
+}
+
+// Close modal when clicking outside of it
+window.onclick = function(event) {
+    const modal = document.getElementById('logsModal');
+    if (event.target == modal) {
+        modal.style.display = 'none';
+    }
+}
+</script>
+</body>
+</html>
