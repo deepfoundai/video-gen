@@ -1,7 +1,3 @@
-[submodule "admin/cc-admin-dashboard"]
-	path = admin/cc-admin-dashboard
-	url = git@github.com-deepfound:deepfoundai/cc-admin-dashboard.git
-
 [submodule "frontend"]
 	path = frontend
 	url = git@github.com-deepfound:deepfoundai/cc-frontend.git
