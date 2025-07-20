@@ -6,7 +6,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Admin Dashboard - Raw</title>
-    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1752983945"></script>
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1753042388?v=1753042201?v=1753039419?v=1753038811?v=1752983945"></script>
     <style>
         body { font-family: monospace; margin: 20px; background: #f0f0f0; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -56,6 +56,7 @@
         <div class="section">
             <h2>User Info</h2>
             <div id="userInfo"></div>
+            <p>Current User ID: <span id="currentUserId" style="font-family: monospace; font-weight: bold;">Loading...</span></p>
             <button onclick="logout()">Logout</button>
         </div>
         
@@ -86,6 +87,81 @@
             </select>
             <button onclick="submitTestJob()">Submit Test Job</button>
             <div id="submitMessage"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Credits Management</h2>
+            
+            <!-- Quick Actions -->
+            <div style="margin-bottom: 20px;">
+                <h3>Quick Actions</h3>
+                <button onclick="loadAllUsers()">Load All Users</button>
+                <button onclick="showDebugPanel()">Show Debug Panel</button>
+                <span id="creditsStats" style="margin-left: 20px; font-weight: bold;"></span>
+            </div>
+            
+            <!-- All Users Table -->
+            <div>
+                <h3>All Users Credits</h3>
+                <div id="usersLoadingMessage"></div>
+                <div id="usersTableContainer" style="max-height: 400px; overflow-y: auto;">
+                    <table id="usersTable" style="display: none;">
+                        <thead>
+                            <tr>
+                                <th>Email</th>
+                                <th>User ID</th>
+                                <th>Credits</th>
+                                <th>Actions</th>
+                                <th>Last Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Selected User Management -->
+            <div id="selectedUserSection" style="display: none; margin-top: 30px; padding: 20px; border: 2px solid #007bff; background: #f0f8ff;">
+                <h3>Managing User: <span id="selectedUserEmail"></span></h3>
+                <p>User ID: <span id="selectedUserId" style="font-family: monospace;"></span></p>
+                <p>Current Credits: <strong id="selectedUserCredits" style="font-size: 24px; color: #007bff;"></strong></p>
+                
+                <div style="margin-top: 20px;">
+                    <button onclick="addCredits(5)" style="background: #28a745; color: white;">+5 Credits</button>
+                    <button onclick="addCredits(10)" style="background: #28a745; color: white;">+10 Credits</button>
+                    <button onclick="addCredits(50)" style="background: #28a745; color: white;">+50 Credits</button>
+                    <button onclick="removeCredits(1)" style="background: #dc3545; color: white;">-1 Credit</button>
+                    <button onclick="removeCredits(5)" style="background: #dc3545; color: white;">-5 Credits</button>
+                    <br><br>
+                    <label>Custom Amount: <input type="number" id="customCreditsAmount" value="0" min="-1000" max="1000" style="width: 100px;"></label>
+                    <button onclick="setCustomCredits()">Set Credits</button>
+                    <button onclick="addCustomCredits()">Add/Remove</button>
+                </div>
+                
+                <div id="userActionMessage" style="margin-top: 10px;"></div>
+            </div>
+            
+            <!-- Debug Panel -->
+            <div id="debugPanel" style="display: none; margin-top: 30px; padding: 20px; background: #f5f5f5; border: 1px solid #ddd;">
+                <h3>Debug Panel</h3>
+                <div>
+                    <h4>Test API Endpoints</h4>
+                    <button onclick="testCreditsAPI('balance')">Test Balance API</button>
+                    <button onclick="testCreditsAPI('admin')">Test Admin API</button>
+                    <button onclick="testCreditsAPI('cors')">Test CORS</button>
+                    <div id="debugOutput" style="margin-top: 10px; padding: 10px; background: white; border: 1px solid #ccc; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto;"></div>
+                </div>
+            </div>
+            
+            <!-- Credits Change Log -->
+            <div style="margin-top: 30px;">
+                <h3>Credits Change Log</h3>
+                <button onclick="refreshCreditsLog()">Refresh Log</button>
+                <button onclick="clearCreditsLog()">Clear Log</button>
+                <div id="creditsLogContainer" style="margin-top: 10px; max-height: 300px; overflow-y: auto; border: 1px solid #ccc; padding: 10px;">
+                    <div id="creditsLog"></div>
+                </div>
+            </div>
         </div>
         
         <div class="section">
@@ -120,6 +196,7 @@ const COGNITO_CONFIG = {
 };
 
 const JOBS_API = 'https://l3erksseb4.execute-api.us-east-1.amazonaws.com/prod/v1';
+const CREDITS_API = 'https://dbmr3la6d3.execute-api.us-east-1.amazonaws.com';
 
 // State
 let userPool = null;
@@ -242,10 +319,44 @@ function showMainSection() {
     document.getElementById('mainSection').style.display = 'block';
     
     const email = localStorage.getItem('adminEmail') || 'Unknown';
-    document.getElementById('userInfo').innerHTML = `
-        <strong>Logged in as:</strong> ${email}<br>
-        <strong>Token:</strong> ${authToken ? authToken.substring(0, 50) + '...' : 'None'}
-    `;
+    
+    // Decode JWT to get user ID
+    let userId = 'Unknown';
+    let tokenEmail = email;
+    try {
+        if (authToken) {
+            const tokenParts = authToken.split('.');
+            if (tokenParts.length === 3) {
+                const payload = JSON.parse(atob(tokenParts[1]));
+                userId = payload.sub || 'Unknown';
+                tokenEmail = payload.email || email;
+                
+                // Check admin status
+                const ADMIN_USER_IDS = [
+                    "f4c8e4a8-3081-70cd-43f9-ea8a7b407430",  // todd.deshane@gmail.com
+                    "04d8c4d8-20f1-7000-5cf5-90247ec54b3a",  // todd@theintersecto.com
+                    "44088418-f0d1-7016-37c9-3bbf83358bb6"   // admin.test@deepfoundai.com
+                ];
+                
+                const isAdmin = ADMIN_USER_IDS.includes(userId);
+                
+                document.getElementById('userInfo').innerHTML = `
+                    <strong>Logged in as:</strong> ${tokenEmail}<br>
+                    <strong>User ID:</strong> <span style="font-family: monospace;">${userId}</span><br>
+                    <strong>Admin Status:</strong> <span class="${isAdmin ? 'success' : 'error'}">${isAdmin ? 'Yes ✓' : 'No ✗'}</span><br>
+                    <strong>Token:</strong> ${authToken.substring(0, 50)}...
+                `;
+                
+                document.getElementById('currentUserId').textContent = userId;
+                
+                if (!isAdmin) {
+                    document.getElementById('userInfo').innerHTML += '<br><br><span class="error">ERROR: This user is not authorized as an admin!</span>';
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Failed to decode token:', e);
+    }
     
     loadJobs();
 }
@@ -537,6 +648,363 @@ window.onclick = function(event) {
         modal.style.display = 'none';
     }
 }
+
+// Credits management functions
+let creditsChangeLog = [];
+let allUsers = [];
+let selectedUser = null;
+
+// Load all users with credits
+async function loadAllUsers() {
+    const loadingDiv = document.getElementById('usersLoadingMessage');
+    loadingDiv.innerHTML = 'Loading all users...';
+    
+    try {
+        // For now, we'll manually fetch known users since we don't have a list endpoint yet
+        // In production, this should be a proper list endpoint
+        const knownUsers = [
+            'f4c8e4a8-3081-70cd-43f9-ea8a7b407430', // todd.deshane@gmail.com
+            '04d8c4d8-20f1-7000-5cf5-90247ec54b3a'  // todd@theintersecto.com
+        ];
+        
+        const users = [];
+        for (const userId of knownUsers) {
+            try {
+                const response = await fetch(`${CREDITS_API}/credits/admin?userId=${userId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    users.push(data);
+                } else {
+                    const errorText = await response.text();
+                    console.error(`Failed to load user ${userId}: ${response.status} - ${errorText}`);
+                    
+                    // Show specific error for this user
+                    if (response.status === 403) {
+                        loadingDiv.innerHTML += `<br><span class="error">Access denied for user ${userId} - not authorized as admin</span>`;
+                    }
+                }
+            } catch (e) {
+                console.error(`Failed to load user ${userId}:`, e);
+            }
+        }
+        
+        allUsers = users;
+        displayUsersTable(users);
+        
+        // Update stats
+        const totalCredits = users.reduce((sum, user) => sum + user.credits, 0);
+        document.getElementById('creditsStats').textContent = 
+            `Total Users: ${users.length} | Total Credits: ${totalCredits}`;
+        
+        loadingDiv.innerHTML = '';
+        
+    } catch (error) {
+        console.error('Failed to load users:', error);
+        loadingDiv.innerHTML = `<span class="error">Failed to load users: ${error.message}</span>`;
+    }
+}
+
+// Display users in table
+function displayUsersTable(users) {
+    const tbody = document.getElementById('usersTableBody');
+    tbody.innerHTML = '';
+    
+    users.forEach(user => {
+        const row = tbody.insertRow();
+        row.innerHTML = `
+            <td>${user.email || 'Unknown'}</td>
+            <td style="font-family: monospace; font-size: 12px;">${user.userId}</td>
+            <td style="text-align: center; font-weight: bold;">${user.credits}</td>
+            <td>
+                <button onclick="selectUser('${user.userId}')" style="background: #007bff; color: white; padding: 5px 10px;">Manage</button>
+            </td>
+            <td>${user.lastUpdated || 'Never'}</td>
+        `;
+    });
+    
+    document.getElementById('usersTable').style.display = 'table';
+}
+
+// Select a user for management
+async function selectUser(userId) {
+    const user = allUsers.find(u => u.userId === userId);
+    if (!user) {
+        // Fetch user data if not in cache
+        try {
+            const response = await fetch(`${CREDITS_API}/credits/admin?userId=${userId}`, {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to load user');
+            }
+            
+            const data = await response.json();
+            selectedUser = data;
+            allUsers.push(data);
+        } catch (error) {
+            alert('Failed to load user: ' + error.message);
+            return;
+        }
+    } else {
+        selectedUser = user;
+    }
+    
+    // Update UI
+    document.getElementById('selectedUserEmail').textContent = selectedUser.email || 'Unknown';
+    document.getElementById('selectedUserId').textContent = selectedUser.userId;
+    document.getElementById('selectedUserCredits').textContent = selectedUser.credits;
+    document.getElementById('selectedUserSection').style.display = 'block';
+    
+    // Scroll to selected user section
+    document.getElementById('selectedUserSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// Add credits to selected user
+async function addCredits(amount) {
+    if (!selectedUser) return;
+    await updateUserCredits(selectedUser.userId, selectedUser.credits + amount);
+}
+
+// Remove credits from selected user
+async function removeCredits(amount) {
+    if (!selectedUser) return;
+    const newAmount = Math.max(0, selectedUser.credits - amount);
+    await updateUserCredits(selectedUser.userId, newAmount);
+}
+
+// Set custom credits
+async function setCustomCredits() {
+    if (!selectedUser) return;
+    const amount = parseInt(document.getElementById('customCreditsAmount').value);
+    if (!isNaN(amount) && amount >= 0) {
+        await updateUserCredits(selectedUser.userId, amount);
+    }
+}
+
+// Add/remove custom credits
+async function addCustomCredits() {
+    if (!selectedUser) return;
+    const amount = parseInt(document.getElementById('customCreditsAmount').value);
+    if (!isNaN(amount)) {
+        const newAmount = Math.max(0, selectedUser.credits + amount);
+        await updateUserCredits(selectedUser.userId, newAmount);
+    }
+}
+
+// Update user credits
+async function updateUserCredits(userId, newCredits) {
+    const messageDiv = document.getElementById('userActionMessage');
+    messageDiv.innerHTML = 'Updating...';
+    
+    const oldCredits = selectedUser.credits;
+    
+    try {
+        const response = await fetch(`${CREDITS_API}/credits/admin`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                userId: userId,
+                credits: newCredits
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || `HTTP ${response.status}`);
+        }
+        
+        // Update local data
+        selectedUser.credits = newCredits;
+        const userIndex = allUsers.findIndex(u => u.userId === userId);
+        if (userIndex >= 0) {
+            allUsers[userIndex].credits = newCredits;
+        }
+        
+        // Update UI
+        document.getElementById('selectedUserCredits').textContent = newCredits;
+        displayUsersTable(allUsers);
+        
+        // Log the change
+        const change = newCredits - oldCredits;
+        logCreditsChange('UPDATE', userId, oldCredits, newCredits, 
+            `Admin set ${selectedUser.email || userId} credits: ${oldCredits} → ${newCredits} (${change >= 0 ? '+' : ''}${change})`);
+        
+        messageDiv.innerHTML = `<span class="success">Credits updated: ${oldCredits} → ${newCredits}</span>`;
+        
+    } catch (error) {
+        console.error('Failed to update credits:', error);
+        messageDiv.innerHTML = `<span class="error">Failed to update: ${error.message}</span>`;
+    }
+}
+
+function logCreditsChange(action, userId, oldValue, newValue, description) {
+    const logEntry = {
+        timestamp: new Date().toISOString(),
+        action: action,
+        userId: userId,
+        oldValue: oldValue,
+        newValue: newValue,
+        description: description,
+        adminUser: localStorage.getItem('adminEmail') || 'Unknown'
+    };
+    
+    creditsChangeLog.unshift(logEntry); // Add to beginning
+    if (creditsChangeLog.length > 100) {
+        creditsChangeLog = creditsChangeLog.slice(0, 100); // Keep only last 100
+    }
+    
+    // Save to localStorage
+    localStorage.setItem('creditsChangeLog', JSON.stringify(creditsChangeLog));
+    
+    // Update display
+    updateCreditsLogDisplay();
+}
+
+function updateCreditsLogDisplay() {
+    const logDiv = document.getElementById('creditsLog');
+    
+    if (creditsChangeLog.length === 0) {
+        logDiv.innerHTML = '<p>No credit changes logged yet</p>';
+        return;
+    }
+    
+    const logHtml = creditsChangeLog.map(entry => {
+        const date = new Date(entry.timestamp);
+        const timeStr = date.toLocaleTimeString();
+        const dateStr = date.toLocaleDateString();
+        
+        return `
+            <div class="log-entry" style="margin-bottom: 10px; padding: 5px; border-bottom: 1px solid #eee;">
+                <strong>${dateStr} ${timeStr}</strong> - ${entry.action}<br>
+                User: ${entry.userId}<br>
+                ${entry.oldValue !== null ? `${entry.oldValue} → ${entry.newValue} credits<br>` : ''}
+                ${entry.description}<br>
+                <small>By: ${entry.adminUser}</small>
+            </div>
+        `;
+    }).join('');
+    
+    logDiv.innerHTML = logHtml;
+}
+
+function refreshCreditsLog() {
+    // Load from localStorage
+    const saved = localStorage.getItem('creditsChangeLog');
+    if (saved) {
+        try {
+            creditsChangeLog = JSON.parse(saved);
+        } catch (e) {
+            console.error('Failed to parse saved credits log:', e);
+            creditsChangeLog = [];
+        }
+    }
+    updateCreditsLogDisplay();
+}
+
+function clearCreditsLog() {
+    if (confirm('Clear all credit change logs?')) {
+        creditsChangeLog = [];
+        localStorage.removeItem('creditsChangeLog');
+        updateCreditsLogDisplay();
+    }
+}
+
+// Debug panel functions
+function showDebugPanel() {
+    const panel = document.getElementById('debugPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+async function testCreditsAPI(endpoint) {
+    const output = document.getElementById('debugOutput');
+    const timestamp = new Date().toISOString();
+    
+    output.innerHTML += `\n<strong>[${timestamp}] Testing ${endpoint}...</strong>\n`;
+    
+    try {
+        let response;
+        
+        switch(endpoint) {
+            case 'balance':
+                // Test with current user's token
+                response = await fetch(`${CREDITS_API}/credits/balance`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                break;
+                
+            case 'admin':
+                // Test admin endpoint with a test user
+                response = await fetch(`${CREDITS_API}/credits/admin?userId=f4c8e4a8-3081-70cd-43f9-ea8a7b407430`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                break;
+                
+            case 'cors':
+                // Test CORS preflight
+                response = await fetch(`${CREDITS_API}/credits/admin`, {
+                    method: 'OPTIONS',
+                    headers: {
+                        'Origin': window.location.origin,
+                        'Access-Control-Request-Method': 'PUT',
+                        'Access-Control-Request-Headers': 'authorization,content-type'
+                    }
+                });
+                break;
+        }
+        
+        const headers = {};
+        response.headers.forEach((value, key) => {
+            headers[key] = value;
+        });
+        
+        output.innerHTML += `Status: ${response.status} ${response.statusText}\n`;
+        output.innerHTML += `Headers: ${JSON.stringify(headers, null, 2)}\n`;
+        
+        if (response.status !== 204) {
+            const body = await response.text();
+            try {
+                const json = JSON.parse(body);
+                output.innerHTML += `Body: ${JSON.stringify(json, null, 2)}\n`;
+            } catch {
+                output.innerHTML += `Body: ${body}\n`;
+            }
+        }
+        
+        output.innerHTML += `<span class="success">✓ Test completed</span>\n\n`;
+        
+    } catch (error) {
+        output.innerHTML += `<span class="error">✗ Error: ${error.message}</span>\n`;
+        output.innerHTML += `Stack: ${error.stack}\n\n`;
+    }
+    
+    // Auto-scroll to bottom
+    output.scrollTop = output.scrollHeight;
+}
+
+// Initialize credits log on page load
+window.addEventListener('DOMContentLoaded', function() {
+    refreshCreditsLog();
+});
 </script>
 </body>
 </html>
