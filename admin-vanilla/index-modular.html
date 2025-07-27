@@ -451,17 +451,6 @@ async function loadOverview() {
         html += '</div>';
         html += '</div>';
         
-        // Quick Stats
-        html += '<div class="subsection">';
-        html += '<h3>Quick Stats</h3>';
-        html += '<table>';
-        html += '<tr><td>Recent Jobs</td><td><strong>' + (jobsResponse.ok ? jobsResponse.data.jobs.length : 'N/A') + '</strong></td></tr>';
-        html += '<tr><td>Your Credits</td><td><strong>' + (creditsResponse.ok ? creditsResponse.data.balance : 'N/A') + '</strong></td></tr>';
-        html += '<tr><td>Active Modules</td><td><strong>' + Object.keys(moduleStates).length + '</strong></td></tr>';
-        html += '<tr><td>API Version</td><td><strong>v1</strong></td></tr>';
-        html += '</table>';
-        html += '</div>';
-        
         html += '</div>';
         
         // Recent Activity
