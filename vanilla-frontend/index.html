@@ -206,6 +206,39 @@
             display: block;
         }
         
+        .sync-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .sync-controls button {
+            padding: 8px 16px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+        
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+        
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+        
         .recent-videos {
             margin-top: 30px;
             padding-top: 20px;
@@ -578,12 +611,18 @@
                     <br>
                     <label>Model Tier: 
                         <select id="tier">
-                            <option value="fast" selected>Fast (VEO-3-Fast)</option>
-                            <option value="balanced">Balanced (VEO-3-Standard)</option>
-                            <option value="premium">Premium (VEO-3-Pro)</option>
+                            <option value="fast" selected>Fast (Budget) - Best for POC</option>
+                            <option value="standard">Standard (LTX-Video) - $0.02/sec</option>
+                            <option value="pro">Pro (Premium Quality)</option>
+                            <option value="veo3_fast">VEO-3 Fast (Premium Pricing)</option>
+                            <option value="veo3_pro">VEO-3 Pro (Premium Pricing)</option>
                         </select>
                     </label>
                     <br>
+                    <label style="display: flex; align-items: center; gap: 8px; margin: 10px 0;">
+                        <input type="checkbox" id="enable-audio" name="enableAudio">
+                        <span>Generate with audio (Fast tier only for POC)</span>
+                    </label>
                     <button type="submit">Generate Video</button>
                 </form>
                 
@@ -611,6 +650,9 @@
     </div>
     
     <script>
+        console.log('🎯 === VIDEO APP SCRIPT START ===', new Date().toISOString());
+        console.log('🔍 Debug: Script executing immediately...');
+        
         // API Configuration
         const JOBS_API = 'https://l3erksseb4.execute-api.us-east-1.amazonaws.com/prod/v1';
         const CREDITS_API = 'https://dbmr3la6d3.execute-api.us-east-1.amazonaws.com';
@@ -1338,8 +1380,19 @@
             const prompt = document.getElementById('prompt').value;
             const duration = document.getElementById('duration').value;
             const tier = document.getElementById('tier').value;
+            const audioCheckbox = document.getElementById('enable-audio');
+            const enableAudio = audioCheckbox ? audioCheckbox.checked : false;
             const messageDiv = document.getElementById('video-message');
             const submitButton = e.target.querySelector('button[type="submit"]');
+            
+            console.log('🎬 === VIDEO SUBMISSION START ===');
+            console.log('📝 Form values:', {
+                prompt: prompt,
+                duration: duration,
+                tier: tier,
+                audioCheckboxExists: !!audioCheckbox,
+                audioCheckboxChecked: enableAudio
+            });
             
             // Check if user has enough credits
             if (creditsBalance < 1) {
@@ -1373,21 +1426,44 @@
                 
                 messageDiv.textContent = 'Credits deducted. Submitting video generation request...';
                 
+                // Build job request with optional audio feature
+                const jobRequest = {
+                    prompt,
+                    seconds: parseInt(duration),
+                    resolution: '720p',
+                    tier: tier,
+                    provider: 'auto'
+                };
+                
+                // Add audio feature if enabled
+                if (enableAudio) {
+                    jobRequest.feature = {
+                        audio: true,
+                        audioTier: 'fast' // Using fast tier for POC
+                    };
+                    console.log('🎵 Audio feature enabled in job request');
+                } else {
+                    console.log('🔕 Audio feature NOT enabled');
+                }
+                
+                console.log('📤 Job request payload:', JSON.stringify(jobRequest, null, 2));
+                console.log('🔗 Submitting to:', `${JOBS_API}/jobs`);
+                
                 // Then submit the job
                 const result = await apiCall(`${JOBS_API}/jobs`, {
                     method: 'POST',
-                    body: JSON.stringify({
-                        prompt,
-                        seconds: parseInt(duration),
-                        resolution: '720p',
-                        tier: tier,
-                        provider: 'auto'
-                    })
+                    body: JSON.stringify(jobRequest)
                 });
                 
-                console.log('Job creation response:', result);
+                console.log('📥 Job creation response:', result);
+                console.log('✅ Response details:', {
+                    ok: result.ok,
+                    status: result.status,
+                    data: result.data
+                });
                 
                 if (!result.ok) {
+                    console.error('❌ Job creation failed:', result);
                     throw new Error(result.error?.message || 'Failed to create job');
                 }
                 
@@ -1395,6 +1471,9 @@
                 const jobId = result.data.jobId || result.data.job_id || result.data.id || result.data.JobId;
                 
                 if (jobId) {
+                    console.log('✅ Job created successfully:', jobId);
+                    console.log('🔄 Starting status polling...');
+                    
                     messageDiv.textContent = `Video generation started! Job ID: ${jobId}`;
                     messageDiv.className = 'success';
                     document.getElementById('prompt').value = '';
@@ -1423,6 +1502,8 @@
                 }
                 
             } catch (error) {
+                console.error('❌ VIDEO SUBMISSION ERROR:', error);
+                console.error('Stack trace:', error.stack);
                 errorTracker.logError(error, 'Video submission');
                 messageDiv.textContent = `Error: ${error.message}`;
                 messageDiv.className = 'error';
@@ -1559,14 +1640,82 @@
             let content = `<div class="job-item ${isCompleted ? 'completed' : ''}" id="job-${job.jobId}">`;
             
             // Show video for completed jobs
-            if (isCompleted && job.outputUrl) {
+            if (isCompleted && (job.combinedUrl || job.outputUrl)) {
+                const videoUrl = job.combinedUrl || job.outputUrl;
+                const hasCombinedAudio = !!job.combinedUrl;
+                
                 content += `
                     <div class="video-container">
-                        <video controls autoplay muted loop>
-                            <source src="${job.outputUrl}" type="video/mp4">
+                        <video controls ${hasCombinedAudio ? '' : 'autoplay muted'} loop>
+                            <source src="${videoUrl}" type="video/mp4">
                             Your browser does not support the video tag.
                         </video>
                     </div>
+                `;
+                
+                if (hasCombinedAudio) {
+                    console.log(`🎆 Job ${job.jobId} has combined video+audio: ${videoUrl}`);
+                }
+                
+                // Add synchronized audio if audio was generated but not combined
+                if (job.audioUrl && !job.combinedUrl) {
+                    console.log(`🎵 Job ${job.jobId} has audio: ${job.audioUrl}`);
+                    // Create a unique ID for this job's media elements
+                    const mediaId = `media-${job.jobId}`;
+                    
+                    // Update video element with ID and remove autoplay/muted for sync
+                    content = content.replace(
+                        '<video controls autoplay muted loop>',
+                        `<video id="video-${mediaId}" controls loop>`
+                    );
+                    
+                    content += `
+                        <div class="audio-container" style="margin-top: 10px; display: none;">
+                            <audio id="audio-${mediaId}" preload="auto">
+                                <source src="${job.audioUrl}" type="audio/wav">
+                            </audio>
+                        </div>
+                        <div class="sync-controls" style="margin-top: 10px;">
+                            <button onclick="playMediaTogether('${mediaId}')" class="btn btn-primary">
+                                ▶️ Play Video with Audio
+                            </button>
+                            <button onclick="pauseMedia('${mediaId}')" class="btn btn-secondary">
+                                ⏸️ Pause
+                            </button>
+                            <button onclick="restartMedia('${mediaId}')" class="btn btn-secondary">
+                                🔄 Restart
+                            </button>
+                        </div>
+                    `;
+                    
+                    // Set up event listeners after DOM update
+                    setTimeout(() => {
+                        const video = document.getElementById(`video-${mediaId}`);
+                        const audio = document.getElementById(`audio-${mediaId}`);
+                        if (video && audio) {
+                            video.addEventListener('play', () => {
+                                audio.currentTime = video.currentTime;
+                                audio.play();
+                            });
+                            video.addEventListener('pause', () => audio.pause());
+                            video.addEventListener('seeked', () => {
+                                audio.currentTime = video.currentTime;
+                            });
+                        }
+                    }, 100);
+                } else if (job.feature && job.feature.audio) {
+                    if (job.combinationStatus === 'COMBINING') {
+                        console.log(`🎆 Job ${job.jobId} is combining video and audio...`);
+                        content += `<p style="color: orange; margin-top: 10px;">🎆 Combining video and audio...</p>`;
+                    } else {
+                        console.log(`⏳ Job ${job.jobId} requested audio but audioUrl not yet available`);
+                        content += `<p style="color: orange; margin-top: 10px;">🎵 Audio generation in progress...</p>`;
+                    }
+                } else {
+                    console.log(`🔕 Job ${job.jobId} was created without audio feature`);
+                }
+                
+                content += `
                     <p class="prompt-text">"${job.prompt || 'No prompt'}"</p>
                     <p><small>Tier: ${job.tier || 'fast'} | ${new Date(job.createdAt).toLocaleString()}</small></p>
                 `;
@@ -1599,6 +1748,48 @@
             return content;
         }
 
+        // Media control functions for synchronized playback
+        function playMediaTogether(mediaId) {
+            const video = document.getElementById(`video-${mediaId}`);
+            const audio = document.getElementById(`audio-${mediaId}`);
+            
+            if (video && audio) {
+                // Sync timestamps
+                audio.currentTime = video.currentTime;
+                
+                // Play both
+                video.play().catch(console.error);
+                audio.play().catch(console.error);
+            }
+        }
+        
+        function pauseMedia(mediaId) {
+            const video = document.getElementById(`video-${mediaId}`);
+            const audio = document.getElementById(`audio-${mediaId}`);
+            
+            if (video) video.pause();
+            if (audio) audio.pause();
+        }
+        
+        function restartMedia(mediaId) {
+            const video = document.getElementById(`video-${mediaId}`);
+            const audio = document.getElementById(`audio-${mediaId}`);
+            
+            if (video) {
+                video.currentTime = 0;
+                video.pause();
+            }
+            if (audio) {
+                audio.currentTime = 0;
+                audio.pause();
+            }
+        }
+        
+        // Make functions globally available
+        window.playMediaTogether = playMediaTogether;
+        window.pauseMedia = pauseMedia;
+        window.restartMedia = restartMedia;
+
         // Poll job status with proper error handling and real-time updates
         async function pollJobStatus(jobId) {
             const maxAttempts = 60; // 5 minutes max
@@ -1629,6 +1820,18 @@
                     // Update the job in the list
                     updateJobInList(jobId, job);
                     
+                    console.log(`📊 Job ${jobId} polling update:`, {
+                        status: job.status,
+                        hasAudioUrl: !!job.audioUrl,
+                        hasCombinedUrl: !!job.combinedUrl,
+                        hasFeatureAudio: job.feature?.audio,
+                        audioStatus: job.audioStatus,
+                        combinationStatus: job.combinationStatus,
+                        outputUrl: job.outputUrl ? job.outputUrl.substring(0, 50) + '...' : 'none',
+                        audioUrl: job.audioUrl ? job.audioUrl.substring(0, 50) + '...' : 'none',
+                        combinedUrl: job.combinedUrl ? job.combinedUrl.substring(0, 50) + '...' : 'none'
+                    });
+                    
                     if (job.status === 'COMPLETED' || job.status === 'FAILED') {
                         clearInterval(interval);
                         
@@ -1655,6 +1858,56 @@
                 }
             }, 5000); // Poll every 5 seconds
         }
+        
+        // Initialize debugging and app
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('🎆 === DEEPFOUND VIDEO APP LOADED ===');
+            console.log('Version: ' + new Date().toISOString());
+            
+            // Debug: Check if audio checkbox exists
+            const audioCheckbox = document.getElementById('enable-audio');
+            console.log('🎵 Audio checkbox found:', !!audioCheckbox);
+            if (audioCheckbox) {
+                console.log('Audio checkbox initial state:', {
+                    checked: audioCheckbox.checked,
+                    disabled: audioCheckbox.disabled,
+                    visible: audioCheckbox.offsetParent !== null
+                });
+                
+                // Add change listener for debugging
+                audioCheckbox.addEventListener('change', (e) => {
+                    console.log('🎵 Audio checkbox changed:', e.target.checked);
+                });
+            } else {
+                console.error('❌ Audio checkbox not found! Check HTML for id="enable-audio"');
+            }
+            
+            // Debug API endpoints
+            console.log('🌐 API Configuration:', {
+                AUTH_API: window.AUTH_API || 'undefined',
+                JOBS_API: window.JOBS_API || 'undefined',
+                CREDITS_API: window.CREDITS_API || 'undefined'
+            });
+            
+            // Check authentication status
+            const hasAuth = !!localStorage.getItem('access_token');
+            console.log('🔐 Authentication:', hasAuth ? 'Logged in' : 'Not logged in');
+        });
+        
+        // Add global error handler for debugging
+        window.addEventListener('error', (e) => {
+            console.error('💥 Global error:', e.error);
+        });
+        
+        // Add unhandled promise rejection handler
+        window.addEventListener('unhandledrejection', (e) => {
+            console.error('💥 Unhandled promise rejection:', e.reason);
+        });
+        
+        // Immediate debug output
+        console.log('🚀 === SCRIPT LOADED ===', new Date().toISOString());
+        console.log('📍 Current URL:', window.location.href);
+        console.log('🌐 User Agent:', navigator.userAgent);
     </script>
 </body>
 </html>
