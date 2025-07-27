@@ -274,18 +274,6 @@
                 </div>
             </div>
         </div>
-        
-        <!-- Module Info -->
-        <div class="section">
-            <h3>Module Information</h3>
-            <div id="moduleInfo">
-                <div class="grid grid-3">
-                    <div><strong>Active Module:</strong> <span id="activeModuleName">overview</span></div>
-                    <div><strong>Loaded Modules:</strong> <span id="loadedModulesCount">0</span></div>
-                    <div><strong>Last Updated:</strong> <span id="lastUpdated">Never</span></div>
-                </div>
-            </div>
-        </div>
     </div>
 </div>
 
@@ -372,7 +360,6 @@ async function switchTab(tabName) {
     document.getElementById(`${tabName}-tab`).classList.add('active');
     
     activeTab = tabName;
-    document.getElementById('activeModuleName').textContent = tabName;
     
     // Load module if needed
     if (tabName !== 'overview' && !moduleStates[tabName]) {
@@ -410,9 +397,7 @@ function updateModuleStatus(moduleName, status) {
 
 // Update module info
 function updateModuleInfo() {
-    const loadedCount = Object.values(moduleStates).filter(s => s === 'loaded').length;
-    document.getElementById('loadedModulesCount').textContent = loadedCount;
-    document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+    // Module info section has been removed
 }
 
 // Reload current module
@@ -471,21 +456,6 @@ async function loadOverview() {
             html += '</table>';
             html += '</div>';
         }
-        
-        // Module Status
-        html += '<div class="subsection">';
-        html += '<h3>Module Status</h3>';
-        html += '<div class="grid grid-3">';
-        const modules = ['jobs', 'credits', 'health', 'users', 'logs', 'debug'];
-        for (const mod of modules) {
-            const status = moduleStates[mod] || 'not loaded';
-            const statusClass = status === 'loaded' ? 'status-COMPLETED' : 
-                               status === 'error' ? 'status-FAILED' : 
-                               'text-muted';
-            html += `<div>${mod}: <span class="${statusClass}">${status}</span></div>`;
-        }
-        html += '</div>';
-        html += '</div>';
         
         contentDiv.innerHTML = html;
         
