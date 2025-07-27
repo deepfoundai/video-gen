@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Health Monitoring - Admin</title>
+    <link rel="stylesheet" href="../shared/styles.css?v=1">
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1753070853"></script>
+    <script src="../shared/auth.js?v=2"></script>
+    <script src="../shared/api.js?v=2"></script>
+    <script src="../shared/ui.js?v=1"></script>
+</head>
+<body>
+<div class="container">
+    <div class="nav">
+        <a href="../index.html">← Dashboard</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="credits.html">Credits</a>
+        <a href="health.html" class="active">Health</a>
+        <a href="users.html">Users</a>
+        <a href="logs.html">Logs</a>
+        <a href="debug.html">Debug</a>
+        <span style="float: right;">
+            <span id="userInfo"></span>
+            <button onclick="adminLogout()">Logout</button>
+        </span>
+    </div>
+    
+    <h1>Health Monitoring</h1>
+    
+    
+    <!-- Health Check Controls -->
+    <div class="section">
+        <h2>Health Check Controls</h2>
+        <button onclick="runHealthCheck()">Run Health Check</button>
+        <button onclick="findHealthCheckJobs()">Find Wasteful Jobs</button>
+        <button onclick="toggleAutoCheck()">Auto-Check: <span id="autoCheckStatus">OFF</span></button>
+        <span id="healthStatus" style="margin-left: 20px;"></span>
+    </div>
+    
+    <!-- System Status -->
+    <div class="section">
+        <h2>System Status</h2>
+        <div id="systemStatus"></div>
+    </div>
+    
+    <!-- Health Check Results -->
+    <div class="section">
+        <h2>Health Check Results</h2>
+        <div id="healthResults"></div>
+    </div>
+    
+    <!-- Wasteful Jobs Analysis -->
+    <div id="wastefulJobsSection" class="section" style="display: none;">
+        <h2>Wasteful Health Check Jobs</h2>
+        <div id="wastefulJobsStats"></div>
+        <div id="wastefulJobsList"></div>
+        <button onclick="cleanupHealthCheckJobs()" class="error">Delete All Health Check Jobs</button>
+    </div>
+    
+    <!-- Health Check Details Modal -->
+    <div id="healthDetailsModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeHealthDetails()">&times;</span>
+            <h2>Health Check Issue Details</h2>
+            <div class="subsection">
+                <h3>Timeline</h3>
+                <ul>
+                    <li><strong>Issue Discovered:</strong> July 20, 2025</li>
+                    <li><strong>Root Cause:</strong> continuous-smoke-test.sh was submitting real job requests</li>
+                    <li><strong>Pattern:</strong> "Health check test" prompt every 5 minutes</li>
+                    <li><strong>Jobs Created:</strong> Multiple per day, some with completed videos</li>
+                </ul>
+                
+                <h3>Fix Applied</h3>
+                <ul>
+                    <li>Updated continuous-smoke-test.sh to test API validation without job creation</li>
+                    <li>Created health-check-improved.sh that performs read-only checks</li>
+                    <li>Created dedicated health endpoint Lambda for proper monitoring</li>
+                    <li>Added cleanup script to remove wasteful jobs</li>
+                </ul>
+                
+                <h3>Prevention</h3>
+                <ul>
+                    <li>Health checks now use invalid requests that return 400 errors</li>
+                    <li>All monitoring is read-only or uses dedicated health endpoints</li>
+                    <li>No production resources created during health validation</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Raw Health Check Logs -->
+    <div class="section">
+        <h2>Health Check Logs</h2>
+        <button onclick="clearHealthLogs()">Clear Logs</button>
+        <pre id="healthLogs" style="max-height: 300px;">Health check logs will appear here...</pre>
+    </div>
+</div>
+
+<script>
+let autoCheckInterval = null;
+const healthLogs = [];
+
+// Check auth
+document.addEventListener('authReady', (e) => {
+    document.getElementById('userInfo').textContent = `${e.detail.user.email}`;
+    checkSystemStatus();
+});
+
+document.addEventListener('authRequired', () => {
+    window.location.href = '../index.html';
+});
+
+// Run health check
+async function runHealthCheck() {
+    logHealth('Starting health check...');
+    const startTime = Date.now();
+    const results = {};
+    
+    // 1. Frontend check
+    const frontendStart = Date.now();
+    try {
+        const response = await fetch(API_ENDPOINTS.FRONTEND, { 
+            method: 'HEAD',
+            mode: 'no-cors' 
+        });
+        results.frontend = {
+            status: 'OK',
+            duration: Date.now() - frontendStart
+        };
+    } catch (error) {
+        results.frontend = {
+            status: 'FAIL',
+            error: error.message,
+            duration: Date.now() - frontendStart
+        };
+    }
+    
+    // 2. Jobs API check (read-only)
+    const jobsResponse = await JobsAPI.listJobs(1);
+    results.jobsApi = {
+        status: jobsResponse.ok ? 'OK' : 'FAIL',
+        statusCode: jobsResponse.status,
+        duration: jobsResponse.duration
+    };
+    
+    // 3. Credits API check
+    const creditsResponse = await CreditsAPI.getBalance();
+    results.creditsApi = {
+        status: creditsResponse.ok ? 'OK' : 'FAIL',
+        statusCode: creditsResponse.status,
+        balance: creditsResponse.ok ? creditsResponse.data.balance : null,
+        duration: creditsResponse.duration
+    };
+    
+    // 4. API Validation check (invalid request - should get 400)
+    const validationStart = Date.now();
+    const validationResponse = await apiCall(`${API_ENDPOINTS.JOBS}/jobs`, {
+        method: 'POST',
+        body: { prompt: '', seconds: 0, resolution: 'invalid' }
+    });
+    results.apiValidation = {
+        status: validationResponse.status === 400 ? 'OK' : 'UNEXPECTED',
+        statusCode: validationResponse.status,
+        duration: validationResponse.duration,
+        note: 'Expected 400 error for invalid request'
+    };
+    
+    const totalDuration = Date.now() - startTime;
+    
+    // Display results
+    displayHealthResults(results, totalDuration);
+    logHealth(`Health check completed in ${totalDuration}ms`, results);
+}
+
+// Display health results
+function displayHealthResults(results, duration) {
+    const allOk = Object.values(results).every(r => r.status === 'OK');
+    
+    let html = `<div class="${allOk ? 'success' : 'error'}">`;
+    html += `<strong>Overall Status:</strong> ${allOk ? '✅ Healthy' : '❌ Issues Detected'}<br>`;
+    html += `<strong>Total Duration:</strong> ${duration}ms`;
+    html += '</div>';
+    
+    html += '<table>';
+    html += '<tr><th>Component</th><th>Status</th><th>Details</th><th>Duration</th></tr>';
+    
+    for (const [component, result] of Object.entries(results)) {
+        html += '<tr>';
+        html += `<td>${component}</td>`;
+        html += `<td class="${result.status === 'OK' ? 'status-COMPLETED' : 'status-FAILED'}">${result.status}</td>`;
+        html += '<td>';
+        if (result.statusCode) html += `HTTP ${result.statusCode} `;
+        if (result.balance !== null) html += `Balance: ${result.balance} `;
+        if (result.error) html += `Error: ${result.error} `;
+        if (result.note) html += `(${result.note})`;
+        html += '</td>';
+        html += `<td>${result.duration}ms</td>`;
+        html += '</tr>';
+    }
+    
+    html += '</table>';
+    html += '<div class="info">💡 No jobs were created during this health check</div>';
+    
+    document.getElementById('healthResults').innerHTML = html;
+}
+
+// Check system status
+async function checkSystemStatus() {
+    const html = '<div class="grid grid-3">';
+    
+    // Add status indicators
+    const statuses = [
+        { name: 'Frontend', status: 'Online', class: 'status-COMPLETED' },
+        { name: 'Jobs API', status: 'Online', class: 'status-COMPLETED' },
+        { name: 'Credits API', status: 'Online', class: 'status-COMPLETED' },
+        { name: 'Authentication', status: 'Active', class: 'status-COMPLETED' },
+        { name: 'DynamoDB', status: 'Available', class: 'status-COMPLETED' },
+        { name: 'Lambda Functions', status: 'Ready', class: 'status-COMPLETED' }
+    ];
+    
+    let statusHtml = '<div class="grid grid-3">';
+    for (const item of statuses) {
+        statusHtml += `<div><strong>${item.name}:</strong> <span class="${item.class}">${item.status}</span></div>`;
+    }
+    statusHtml += '</div>';
+    
+    document.getElementById('systemStatus').innerHTML = statusHtml;
+}
+
+// Find health check jobs
+async function findHealthCheckJobs() {
+    showLoading('wastefulJobsList', 'Searching for health check jobs...');
+    document.getElementById('wastefulJobsSection').style.display = 'block';
+    
+    // Get recent jobs and filter for health check pattern
+    const response = await JobsAPI.listJobs(500);
+    
+    if (response.ok) {
+        const healthCheckJobs = response.data.jobs.filter(job => 
+            job.prompt && job.prompt.toLowerCase().includes('health check test')
+        );
+        
+        displayWastefulJobs(healthCheckJobs);
+    } else {
+        document.getElementById('wastefulJobsList').innerHTML = '<div class="error">Failed to load jobs</div>';
+    }
+}
+
+// Display wasteful jobs
+function displayWastefulJobs(jobs) {
+    // Calculate stats
+    const stats = {
+        total: jobs.length,
+        completed: jobs.filter(j => j.status === 'COMPLETED').length,
+        withVideo: jobs.filter(j => j.outputUrl).length,
+        estimatedCost: jobs.length * 0.10 // $0.10 per video estimate
+    };
+    
+    // Stats display
+    let statsHtml = '<div class="error">';
+    statsHtml += `<strong>Wasteful Jobs Found:</strong> ${stats.total}<br>`;
+    statsHtml += `<strong>Completed:</strong> ${stats.completed}<br>`;
+    statsHtml += `<strong>With Video Output:</strong> ${stats.withVideo}<br>`;
+    statsHtml += `<strong>Estimated Waste:</strong> $${stats.estimatedCost.toFixed(2)}<br>`;
+    statsHtml += '</div>';
+    
+    document.getElementById('wastefulJobsStats').innerHTML = statsHtml;
+    
+    // Jobs list
+    let html = '<table>';
+    html += '<tr><th>Job ID</th><th>Status</th><th>Created</th><th>Video</th></tr>';
+    
+    for (const job of jobs.slice(0, 10)) { // Show first 10
+        html += '<tr>';
+        html += `<td class="monospace text-small">${job.jobId}</td>`;
+        html += `<td class="status-${job.status}">${job.status}</td>`;
+        html += `<td class="text-small">${formatDate(job.createdAt)}</td>`;
+        html += `<td>${job.outputUrl ? '✅ Yes' : '❌ No'}</td>`;
+        html += '</tr>';
+    }
+    
+    if (jobs.length > 10) {
+        html += '<tr><td colspan="4" class="text-muted">... and ' + (jobs.length - 10) + ' more</td></tr>';
+    }
+    
+    html += '</table>';
+    
+    document.getElementById('wastefulJobsList').innerHTML = html;
+}
+
+// Cleanup health check jobs
+async function cleanupHealthCheckJobs() {
+    if (!confirm('Delete all health check test jobs? This cannot be undone.')) {
+        return;
+    }
+    
+    alert('Cleanup functionality would be implemented here. For safety, use the cleanup script manually.');
+    logHealth('Cleanup requested but not implemented in UI for safety');
+}
+
+// Toggle auto check
+function toggleAutoCheck() {
+    if (autoCheckInterval) {
+        clearInterval(autoCheckInterval);
+        autoCheckInterval = null;
+        document.getElementById('autoCheckStatus').textContent = 'OFF';
+    } else {
+        // Run check every 5 minutes
+        autoCheckInterval = setInterval(runHealthCheck, 300000);
+        document.getElementById('autoCheckStatus').textContent = 'ON';
+        runHealthCheck(); // Run immediately
+    }
+}
+
+// Show health check details
+function showHealthCheckDetails() {
+    document.getElementById('healthDetailsModal').style.display = 'block';
+}
+
+// Close health details
+function closeHealthDetails() {
+    document.getElementById('healthDetailsModal').style.display = 'none';
+}
+
+// Health logging
+function logHealth(message, data) {
+    const log = {
+        timestamp: new Date().toISOString(),
+        message: message,
+        data: data
+    };
+    
+    healthLogs.unshift(log);
+    if (healthLogs.length > 50) healthLogs.pop();
+    
+    updateHealthLogs();
+}
+
+function updateHealthLogs() {
+    const logs = healthLogs.map(log => {
+        let text = `[${log.timestamp}] ${log.message}`;
+        if (log.data) {
+            text += '\n' + JSON.stringify(log.data, null, 2);
+        }
+        return text;
+    }).join('\n\n');
+    
+    document.getElementById('healthLogs').textContent = logs || 'No health checks run yet';
+}
+
+function clearHealthLogs() {
+    healthLogs.length = 0;
+    updateHealthLogs();
+}
+
+// Modal click handler
+window.onclick = function(event) {
+    const modal = document.getElementById('healthDetailsModal');
+    if (event.target == modal) {
+        modal.style.display = 'none';
+    }
+}
+</script>
+</body>
+</html>

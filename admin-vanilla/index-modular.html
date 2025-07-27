@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Admin Dashboard - Modular</title>
+    <link rel="stylesheet" href="shared/styles.css?v=2">
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js"></script>
+    <script src="shared/auth.js?v=2"></script>
+    <script src="shared/api.js?v=5"></script>
+    <script src="shared/module-loader-v2.js?v=2"></script>
+    <style>
+        /* Enhanced tab styles */
+        .tab-container {
+            background: white;
+            border: 2px solid #000;
+            margin: 20px 0;
+            min-height: 600px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .tab-header {
+            background: #333;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0;
+        }
+        
+        .tab-nav {
+            display: flex;
+            margin: 0;
+            padding: 0;
+            list-style: none;
+            flex-grow: 1;
+            overflow-x: auto;
+        }
+        
+        .tab-nav li {
+            margin: 0;
+        }
+        
+        .tab-nav button {
+            background: #555;
+            color: white;
+            border: none;
+            border-radius: 0;
+            padding: 15px 25px;
+            margin: 0;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: bold;
+            transition: background 0.2s;
+            border-right: 1px solid #333;
+            white-space: nowrap;
+        }
+        
+        .tab-nav button:hover {
+            background: #666;
+        }
+        
+        .tab-nav button.active {
+            background: white;
+            color: #000;
+            border-bottom: 2px solid white;
+        }
+        
+        .tab-actions {
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .tab-actions button {
+            background: #777;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            font-size: 12px;
+        }
+        
+        .tab-content {
+            padding: 20px;
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+        
+        .tab-pane {
+            display: none;
+        }
+        
+        .tab-pane.active {
+            display: block;
+        }
+        
+        /* Module status indicator */
+        .module-status {
+            font-size: 10px;
+            margin-left: 5px;
+            vertical-align: super;
+        }
+        
+        .module-status.loaded {
+            color: #0F0;
+        }
+        
+        .module-status.loading {
+            color: #FF0;
+        }
+        
+        .module-status.error {
+            color: #F00;
+        }
+        
+        /* Quick stats bar */
+        .quick-stats {
+            background: #f0f0f0;
+            padding: 10px 20px;
+            margin: -20px -20px 20px -20px;
+            border-bottom: 1px solid #ccc;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .quick-stats span {
+            margin-right: 20px;
+        }
+        
+        /* Module container */
+        .module-container {
+            min-height: 400px;
+        }
+        
+        /* Add module dialog */
+        .add-module-dialog {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            border: 2px solid #000;
+            padding: 20px;
+            z-index: 1000;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        
+        .dialog-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 999;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Admin Dashboard</h1>
+    
+    <!-- Login Section -->
+    <div id="loginSection" class="section">
+        <h2>Login</h2>
+        <form id="loginForm">
+            <input type="email" id="email" placeholder="Email" required>
+            <input type="password" id="password" placeholder="Password" required>
+            <button type="submit">Login</button>
+        </form>
+        <div id="loginMessage"></div>
+    </div>
+    
+    <!-- Main Dashboard -->
+    <div id="mainSection" style="display: none;">
+        <!-- User Info Bar -->
+        <div class="section">
+            <div style="float: right;">
+                <span id="userInfo"></span>
+                <button onclick="handleLogout()">Logout</button>
+            </div>
+            <h2 style="margin: 0;">Admin Control Panel</h2>
+            <div style="margin-top: 10px;">
+                <span class="text-muted">Modular dashboard with dynamic module loading</span>
+            </div>
+        </div>
+        
+        <!-- Tab Container -->
+        <div class="tab-container">
+            <!-- Tab Header -->
+            <div class="tab-header">
+                <!-- Tab Navigation -->
+                <ul class="tab-nav" id="tabNav">
+                    <li><button class="active" onclick="switchTab('overview')" data-module="overview">
+                        Overview<span class="module-status" id="status-overview"></span>
+                    </button></li>
+                    <li><button onclick="switchTab('jobs')" data-module="jobs">
+                        Jobs<span class="module-status" id="status-jobs"></span>
+                    </button></li>
+                    <li><button onclick="switchTab('credits')" data-module="credits">
+                        Credits<span class="module-status" id="status-credits"></span>
+                    </button></li>
+                    <li><button onclick="switchTab('health')" data-module="health">
+                        Health<span class="module-status" id="status-health"></span>
+                    </button></li>
+                    <li><button onclick="switchTab('users')" data-module="users">
+                        Users<span class="module-status" id="status-users"></span>
+                    </button></li>
+                    <li><button onclick="switchTab('logs')" data-module="logs">
+                        Logs<span class="module-status" id="status-logs"></span>
+                    </button></li>
+                    <li><button onclick="switchTab('debug')" data-module="debug">
+                        Debug<span class="module-status" id="status-debug"></span>
+                    </button></li>
+                </ul>
+                
+                <!-- Tab Actions -->
+                <div class="tab-actions">
+                    <button onclick="reloadCurrentModule()" title="Reload current module">↻</button>
+                    <button onclick="showAddModuleDialog()" title="Add new module">+</button>
+                </div>
+            </div>
+            
+            <!-- Tab Content -->
+            <div class="tab-content">
+                <!-- Overview Tab (Built-in) -->
+                <div id="overview-tab" class="tab-pane active">
+                    <div class="quick-stats">
+                        <div>
+                            <span id="overview-stats">Loading stats...</span>
+                        </div>
+                        <div>
+                            <button onclick="refreshOverview()">Refresh</button>
+                        </div>
+                    </div>
+                    <div id="overview-content" class="module-container">
+                        <h2>System Overview</h2>
+                        <div class="loading">Loading overview...</div>
+                    </div>
+                </div>
+                
+                <!-- Dynamic Module Tabs -->
+                <div id="jobs-tab" class="tab-pane">
+                    <div class="module-container" id="jobs-content"></div>
+                </div>
+                
+                <div id="credits-tab" class="tab-pane">
+                    <div class="module-container" id="credits-content"></div>
+                </div>
+                
+                <div id="health-tab" class="tab-pane">
+                    <div class="module-container" id="health-content"></div>
+                </div>
+                
+                <div id="users-tab" class="tab-pane">
+                    <div class="module-container" id="users-content"></div>
+                </div>
+                
+                <div id="logs-tab" class="tab-pane">
+                    <div class="module-container" id="logs-content"></div>
+                </div>
+                
+                <div id="debug-tab" class="tab-pane">
+                    <div class="module-container" id="debug-content"></div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Module Info -->
+        <div class="section">
+            <h3>Module Information</h3>
+            <div id="moduleInfo">
+                <div class="grid grid-3">
+                    <div><strong>Active Module:</strong> <span id="activeModuleName">overview</span></div>
+                    <div><strong>Loaded Modules:</strong> <span id="loadedModulesCount">0</span></div>
+                    <div><strong>Last Updated:</strong> <span id="lastUpdated">Never</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Module Dialog -->
+<div class="dialog-overlay" onclick="hideAddModuleDialog()"></div>
+<div class="add-module-dialog">
+    <h3>Add Custom Module</h3>
+    <p>Add a new module by entering its URL or selecting from available modules:</p>
+    
+    <label>Module Name:
+        <input type="text" id="newModuleName" placeholder="e.g., reporting">
+    </label>
+    
+    <label>Module URL:
+        <input type="text" id="newModuleUrl" placeholder="e.g., pages/reporting.html">
+    </label>
+    
+    <div style="margin-top: 20px;">
+        <button onclick="addCustomModule()">Add Module</button>
+        <button onclick="hideAddModuleDialog()">Cancel</button>
+    </div>
+    
+    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #ccc;">
+        <h4>Available Modules:</h4>
+        <ul>
+            <li>reports - Financial reporting</li>
+            <li>analytics - Usage analytics</li>
+            <li>settings - System settings</li>
+            <li>audit - Audit logs</li>
+        </ul>
+    </div>
+</div>
+
+<script>
+// State
+let activeTab = 'overview';
+const moduleStates = {};
+
+// Handle login
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+    
+    showLoading('loginMessage', 'Logging in...');
+    
+    try {
+        const result = await adminLogin(email, password);
+        
+        if (result.success) {
+            displaySuccess(`Login successful in ${result.duration}ms`, 'loginMessage');
+            showMainDashboard();
+        }
+    } catch (error) {
+        displayError(error, 'loginMessage');
+    }
+});
+
+// Show main dashboard
+function showMainDashboard() {
+    document.getElementById('loginSection').style.display = 'none';
+    document.getElementById('mainSection').style.display = 'block';
+    
+    const user = getUserDetails();
+    document.getElementById('userInfo').textContent = `${user.email} (${user.userId.substring(0, 8)}...)`;
+    
+    // Load overview
+    loadOverview();
+}
+
+// Switch tabs
+async function switchTab(tabName) {
+    // Update nav
+    document.querySelectorAll('.tab-nav button').forEach(btn => {
+        btn.classList.remove('active');
+    });
+    event.target.classList.add('active');
+    
+    // Update content
+    document.querySelectorAll('.tab-pane').forEach(pane => {
+        pane.classList.remove('active');
+    });
+    document.getElementById(`${tabName}-tab`).classList.add('active');
+    
+    activeTab = tabName;
+    document.getElementById('activeModuleName').textContent = tabName;
+    
+    // Load module if needed
+    if (tabName !== 'overview' && !moduleStates[tabName]) {
+        await loadModule(tabName);
+    }
+}
+
+// Load module
+async function loadModule(moduleName) {
+    updateModuleStatus(moduleName, 'loading');
+    moduleStates[moduleName] = 'loading';
+    
+    try {
+        await ModuleLoader.load(moduleName, `${moduleName}-content`);
+        moduleStates[moduleName] = 'loaded';
+        updateModuleStatus(moduleName, 'loaded');
+        updateModuleInfo();
+    } catch (error) {
+        moduleStates[moduleName] = 'error';
+        updateModuleStatus(moduleName, 'error');
+        console.error(`Failed to load ${moduleName}:`, error);
+    }
+}
+
+// Update module status indicator
+function updateModuleStatus(moduleName, status) {
+    const indicator = document.getElementById(`status-${moduleName}`);
+    if (indicator) {
+        indicator.className = `module-status ${status}`;
+        indicator.textContent = status === 'loaded' ? '●' : 
+                               status === 'loading' ? '○' : 
+                               status === 'error' ? '✗' : '';
+    }
+}
+
+// Update module info
+function updateModuleInfo() {
+    const loadedCount = Object.values(moduleStates).filter(s => s === 'loaded').length;
+    document.getElementById('loadedModulesCount').textContent = loadedCount;
+    document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+}
+
+// Reload current module
+async function reloadCurrentModule() {
+    if (activeTab === 'overview') {
+        loadOverview();
+    } else {
+        moduleStates[activeTab] = null;
+        await loadModule(activeTab);
+    }
+}
+
+// Load overview (built-in module)
+async function loadOverview() {
+    const contentDiv = document.getElementById('overview-content');
+    showLoading('overview-content', 'Loading overview...');
+    
+    try {
+        // Get system stats
+        const [jobsResponse, creditsResponse] = await Promise.all([
+            JobsAPI.listJobs(10),
+            CreditsAPI.getBalance()
+        ]);
+        
+        let html = '<h2>System Overview</h2>';
+        html += '<div class="grid grid-2">';
+        
+        // System Status
+        html += '<div class="subsection">';
+        html += '<h3>System Status</h3>';
+        html += '<div class="grid grid-2">';
+        html += '<div>🟢 Frontend: Online</div>';
+        html += '<div>🟢 Jobs API: Online</div>';
+        html += '<div>🟢 Credits API: Online</div>';
+        html += '<div>🟢 Database: Available</div>';
+        html += '</div>';
+        html += '</div>';
+        
+        // Quick Stats
+        html += '<div class="subsection">';
+        html += '<h3>Quick Stats</h3>';
+        html += '<table>';
+        html += '<tr><td>Recent Jobs</td><td><strong>' + (jobsResponse.ok ? jobsResponse.data.jobs.length : 'N/A') + '</strong></td></tr>';
+        html += '<tr><td>Your Credits</td><td><strong>' + (creditsResponse.ok ? creditsResponse.data.balance : 'N/A') + '</strong></td></tr>';
+        html += '<tr><td>Active Modules</td><td><strong>' + Object.keys(moduleStates).length + '</strong></td></tr>';
+        html += '<tr><td>API Version</td><td><strong>v1</strong></td></tr>';
+        html += '</table>';
+        html += '</div>';
+        
+        html += '</div>';
+        
+        // Recent Activity
+        if (jobsResponse.ok && jobsResponse.data.jobs.length > 0) {
+            html += '<div class="subsection">';
+            html += '<h3>Recent Jobs</h3>';
+            html += '<table>';
+            html += '<tr><th>Status</th><th>Prompt</th><th>Created</th></tr>';
+            
+            const recentJobs = jobsResponse.data.jobs.slice(0, 5);
+            for (const job of recentJobs) {
+                html += '<tr>';
+                html += `<td class="status-${job.status}">${job.status}</td>`;
+                html += `<td>${job.prompt?.substring(0, 30)}...</td>`;
+                html += `<td class="text-small">${formatDate(job.createdAt)}</td>`;
+                html += '</tr>';
+            }
+            html += '</table>';
+            html += '</div>';
+        }
+        
+        // Module Status
+        html += '<div class="subsection">';
+        html += '<h3>Module Status</h3>';
+        html += '<div class="grid grid-3">';
+        const modules = ['jobs', 'credits', 'health', 'users', 'logs', 'debug'];
+        for (const mod of modules) {
+            const status = moduleStates[mod] || 'not loaded';
+            const statusClass = status === 'loaded' ? 'status-COMPLETED' : 
+                               status === 'error' ? 'status-FAILED' : 
+                               'text-muted';
+            html += `<div>${mod}: <span class="${statusClass}">${status}</span></div>`;
+        }
+        html += '</div>';
+        html += '</div>';
+        
+        contentDiv.innerHTML = html;
+        
+        // Update stats bar
+        document.getElementById('overview-stats').textContent = 
+            `Last updated: ${new Date().toLocaleTimeString()} | Jobs: ${jobsResponse.ok ? jobsResponse.data.jobs.length : 0} | Credits: ${creditsResponse.ok ? creditsResponse.data.balance : 0}`;
+            
+    } catch (error) {
+        contentDiv.innerHTML = `<div class="error">Failed to load overview: ${error.message}</div>`;
+    }
+}
+
+// Refresh overview
+function refreshOverview() {
+    loadOverview();
+}
+
+// Show/hide add module dialog
+function showAddModuleDialog() {
+    document.querySelector('.dialog-overlay').style.display = 'block';
+    document.querySelector('.add-module-dialog').style.display = 'block';
+}
+
+function hideAddModuleDialog() {
+    document.querySelector('.dialog-overlay').style.display = 'none';
+    document.querySelector('.add-module-dialog').style.display = 'none';
+}
+
+// Add custom module (placeholder)
+function addCustomModule() {
+    const name = document.getElementById('newModuleName').value;
+    const url = document.getElementById('newModuleUrl').value;
+    
+    if (!name || !url) {
+        alert('Please enter both module name and URL');
+        return;
+    }
+    
+    alert(`Adding custom module: ${name} from ${url}\n\nThis feature is not yet implemented.`);
+    hideAddModuleDialog();
+}
+
+// Handle logout
+function handleLogout() {
+    if (cognitoUser) {
+        cognitoUser.signOut();
+    }
+    
+    clearAuth();
+    
+    // Show login section
+    document.getElementById('loginSection').style.display = 'block';
+    document.getElementById('mainSection').style.display = 'none';
+}
+
+// Check auth on load
+document.addEventListener('authReady', (e) => {
+    console.log('User authenticated:', e.detail.user.email);
+    showMainDashboard();
+});
+
+document.addEventListener('authRequired', () => {
+    console.log('Authentication required');
+});
+
+// Listen for module events
+window.addEventListener('moduleLoaded', (e) => {
+    console.log('Module loaded:', e.detail.module);
+    updateModuleInfo();
+});
+</script>
+</body>
+</html>

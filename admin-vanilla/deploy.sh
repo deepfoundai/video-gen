@@ -1,31 +1,40 @@
 #!/bin/bash
 
-# Simple deployment script for vanilla admin
+# Deployment script for vanilla admin dashboard
 set -e
 
 echo "🚀 Deploying Vanilla Admin Dashboard"
 echo "===================================="
 
-# Add timestamp to force cache refresh
-TIMESTAMP=$(date +%s)
-cp index.html index.tmp.html
-sed -i.bak "s/amazon-cognito-identity.min.js/amazon-cognito-identity.min.js?v=$TIMESTAMP/g" index.tmp.html
-mv index.tmp.html index.html
-rm -f index.html.bak
+# Configuration
+S3_BUCKET="deepfound-admin-ui-prod"
+CLOUDFRONT_ID="ERGWO5NT1YNOP"
 
-# Deploy to S3 admin bucket
-echo "Uploading to S3..."
-aws s3 cp index.html s3://deepfound-admin-ui-prod/raw-admin.html \
+# Deploy main admin page
+echo "1. Deploying admin dashboard..."
+aws s3 cp index-modular.html "s3://$S3_BUCKET/index.html" \
     --cache-control "no-cache, no-store, must-revalidate" \
-    --metadata-directive REPLACE
+    --content-type "text/html"
+
+# Deploy shared resources
+echo "2. Deploying shared resources..."
+aws s3 sync shared/ "s3://$S3_BUCKET/shared/" \
+    --cache-control "max-age=3600" \
+    --exclude "*.bak" \
+    --delete
+
+# Deploy page modules
+echo "3. Deploying page modules..."
+aws s3 sync pages/ "s3://$S3_BUCKET/pages/" \
+    --cache-control "no-cache, no-store, must-revalidate" \
+    --exclude "*.bak" \
+    --delete
 
 # Invalidate CloudFront cache
-echo ""
-echo "Invalidating CloudFront cache..."
-DISTRIBUTION_ID="ERGWO5NT1YNOP"
+echo "4. Invalidating CloudFront cache..."
 aws cloudfront create-invalidation \
-    --distribution-id $DISTRIBUTION_ID \
-    --paths "/raw-admin.html" \
+    --distribution-id $CLOUDFRONT_ID \
+    --paths "/*" \
     --output json > /tmp/invalidation.json
 
 INVALIDATION_ID=$(cat /tmp/invalidation.json | grep '"Id"' | cut -d'"' -f4)
@@ -34,10 +43,4 @@ echo "Invalidation created: $INVALIDATION_ID"
 echo ""
 echo "✅ Deployment complete!"
 echo ""
-echo "Access at: https://admin.deepfoundai.com/raw-admin.html"
-echo ""
-echo "Note: CloudFront invalidation may take 1-2 minutes to complete."
-echo ""
-echo "Test credentials:"
-echo "Email: admin.test@deepfoundai.com"
-echo "Password: AdminTest123!"
+echo "Access at: https://admin.deepfoundai.com/"
