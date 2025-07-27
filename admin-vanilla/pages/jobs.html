@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Jobs Management - Admin</title>
+    <link rel="stylesheet" href="../shared/styles.css?v=1">
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1753070853"></script>
+    <script src="../shared/auth.js?v=3"></script>
+    <script src="../shared/api.js?v=6"></script>
+    <script src="../shared/ui.js?v=1"></script>
+</head>
+<body>
+<div class="container">
+    <div class="nav">
+        <a href="../index.html">← Dashboard</a>
+        <a href="jobs.html" class="active">Jobs</a>
+        <a href="credits.html">Credits</a>
+        <a href="health.html">Health</a>
+        <a href="users.html">Users</a>
+        <a href="logs.html">Logs</a>
+        <a href="debug.html">Debug</a>
+        <span style="float: right;">
+            <span id="userInfo"></span>
+            <button onclick="adminLogout()">Logout</button>
+        </span>
+    </div>
+    
+    <h1>Jobs Management</h1>
+    
+    <!-- Jobs Controls -->
+    <div class="section">
+        <h2>Jobs Control Panel</h2>
+        <button onclick="loadJobs()">Refresh Jobs</button>
+        <button onclick="toggleAutoRefresh()">Auto-Refresh: <span id="autoRefreshStatus">OFF</span></button>
+        
+        <label>Filter by Status:
+            <select id="statusFilter" onchange="filterJobs()">
+                <option value="">All Statuses</option>
+                <option value="QUEUED">QUEUED</option>
+                <option value="PROCESSING">PROCESSING</option>
+                <option value="COMPLETED">COMPLETED</option>
+                <option value="FAILED">FAILED</option>
+            </select>
+        </label>
+        
+        <label>Limit:
+            <select id="limitFilter" onchange="loadJobs()">
+                <option value="10">10</option>
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="500">500</option>
+            </select>
+        </label>
+        
+        <label>
+            <input type="checkbox" id="showDetails" onchange="toggleDetails()"> Show Full Details
+        </label>
+    </div>
+    
+    <!-- Jobs Stats -->
+    <div class="section">
+        <h2>Jobs Statistics</h2>
+        <div id="jobsStats"></div>
+    </div>
+    
+    <!-- Jobs Table -->
+    <div class="section">
+        <h2>Jobs List</h2>
+        <div id="jobsError"></div>
+        <div id="jobsTable"></div>
+    </div>
+    
+    <!-- Raw Response -->
+    <div class="section">
+        <h2>Raw API Response</h2>
+        <button onclick="toggleRawResponse()">Toggle Raw Response</button>
+        <pre id="jobsRaw" style="display: none;"></pre>
+    </div>
+    
+    <!-- Job Details Modal -->
+    <div id="jobModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeJobModal()">&times;</span>
+            <h2>Job Details</h2>
+            <div id="jobModalContent"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+let allJobs = [];
+let autoRefreshInterval = null;
+let showingDetails = false;
+
+// Check auth and load jobs
+document.addEventListener('authReady', (e) => {
+    document.getElementById('userInfo').textContent = `${e.detail.user.email}`;
+    loadJobs();
+});
+
+document.addEventListener('authRequired', () => {
+    window.location.href = '../index.html';
+});
+
+// Make all functions globally accessible
+window.loadJobs = async function() {
+    showLoading('jobsTable', 'Loading jobs...');
+    document.getElementById('jobsError').innerHTML = '';
+    
+    const limit = document.getElementById('limitFilter').value;
+    const response = await JobsAPI.listJobs(limit);
+    
+    if (response.ok) {
+        allJobs = response.data.jobs || [];
+        displayJobs(allJobs);
+        updateStats(allJobs);
+        
+        // Update raw response
+        document.getElementById('jobsRaw').textContent = JSON.stringify(response, null, 2);
+    } else {
+        displayError(response, 'jobsError');
+        document.getElementById('jobsTable').innerHTML = '';
+    }
+}
+
+// Display jobs table
+window.displayJobs = function(jobs) {
+    const statusFilter = document.getElementById('statusFilter').value;
+    const filteredJobs = statusFilter 
+        ? jobs.filter(job => job.status === statusFilter)
+        : jobs;
+    
+    let html = '<table>';
+    html += '<tr>';
+    html += '<th>Job ID</th>';
+    html += '<th>Status</th>';
+    html += '<th>User ID</th>';
+    html += '<th>Prompt</th>';
+    html += '<th>Audio</th>';
+    html += '<th>Duration</th>';
+    html += '<th>Created</th>';
+    html += '<th>Updated</th>';
+    html += '<th>Actions</th>';
+    html += '</tr>';
+    
+    for (const job of filteredJobs) {
+        html += '<tr>';
+        html += `<td class="monospace text-small">${job.jobId.substring(0, 8)}...</td>`;
+        html += `<td class="status-${job.status}">${job.status}</td>`;
+        html += `<td class="monospace text-small">${job.user_id ? job.user_id.substring(0, 8) + '...' : 'N/A'}</td>`;
+        html += `<td>${(job.prompt || '').substring(0, 50)}${job.prompt && job.prompt.length > 50 ? '...' : ''}</td>`;
+        
+        // Audio status column
+        html += '<td>';
+        if (job.audioUrl) {
+            html += `<span style="color: green;">✓ Audio</span>`;
+            if (job.audioStatus === 'COMPLETED') {
+                html += ` <button onclick="window.open('${job.audioUrl}', '_blank')" style="font-size: 11px;">Play</button>`;
+            }
+        } else if (job.feature && job.feature.audio === true) {
+            if (job.audioStatus === 'FAILED') {
+                html += `<span style="color: red;" title="${job.audioError || 'Audio generation failed'}">✗ Failed</span>`;
+            } else if (job.audioStatus === 'PROCESSING') {
+                html += '<span style="color: orange;">⟳ Processing</span>';
+            } else {
+                html += '<span style="color: gray;">- Pending</span>';
+            }
+        } else {
+            html += '<span style="color: gray;">-</span>';
+        }
+        html += '</td>';
+        
+        html += `<td>${job.duration_seconds || job.durationSeconds?.toFixed(1) || '-'}s</td>`;
+        html += `<td class="text-small">${formatDate(job.createdAt)}</td>`;
+        html += `<td class="text-small">${formatDate(job.updatedAt)}</td>`;
+        html += '<td>';
+        html += `<button onclick="viewJobDetails('${job.jobId}')">Details</button>`;
+        if (job.status === 'COMPLETED' && job.outputUrl) {
+            html += `<button onclick="window.open('${job.outputUrl}', '_blank')">View</button>`;
+        }
+        html += '</td>';
+        html += '</tr>';
+        
+        if (showingDetails) {
+            html += '<tr>';
+            html += '<td colspan="9">';
+            html += '<details>';
+            html += '<summary>Full Job Data</summary>';
+            html += '<pre>' + JSON.stringify(job, null, 2) + '</pre>';
+            html += '</details>';
+            html += '</td>';
+            html += '</tr>';
+        }
+    }
+    
+    html += '</table>';
+    
+    if (filteredJobs.length === 0) {
+        html = '<div class="info">No jobs found</div>';
+    }
+    
+    document.getElementById('jobsTable').innerHTML = html;
+}
+
+// Update statistics
+window.updateStats = function(jobs) {
+    const stats = {
+        total: jobs.length,
+        queued: jobs.filter(j => j.status === 'QUEUED').length,
+        processing: jobs.filter(j => j.status === 'PROCESSING').length,
+        completed: jobs.filter(j => j.status === 'COMPLETED').length,
+        failed: jobs.filter(j => j.status === 'FAILED').length,
+        withAudio: jobs.filter(j => j.audioUrl).length,
+        audioRequested: jobs.filter(j => j.feature && j.feature.audio === true).length,
+        audioFailed: jobs.filter(j => j.audioStatus === 'FAILED').length
+    };
+    
+    // Calculate success rate
+    const finished = stats.completed + stats.failed;
+    const successRate = finished > 0 ? ((stats.completed / finished) * 100).toFixed(1) : 0;
+    
+    // Calculate average processing time for completed jobs
+    const completedJobs = jobs.filter(j => j.status === 'COMPLETED');
+    let avgProcessingTime = 0;
+    if (completedJobs.length > 0) {
+        const totalTime = completedJobs.reduce((sum, job) => {
+            const created = new Date(job.createdAt);
+            const updated = new Date(job.updatedAt);
+            return sum + (updated - created);
+        }, 0);
+        avgProcessingTime = totalTime / completedJobs.length / 1000; // Convert to seconds
+    }
+    
+    let html = '<div class="grid grid-3">';
+    html += `<div><strong>Total Jobs:</strong> ${stats.total}</div>`;
+    html += `<div><strong>Queued:</strong> <span class="status-QUEUED">${stats.queued}</span></div>`;
+    html += `<div><strong>Processing:</strong> <span class="status-PROCESSING">${stats.processing}</span></div>`;
+    html += `<div><strong>Completed:</strong> <span class="status-COMPLETED">${stats.completed}</span></div>`;
+    html += `<div><strong>Failed:</strong> <span class="status-FAILED">${stats.failed}</span></div>`;
+    html += `<div><strong>Success Rate:</strong> ${successRate}%</div>`;
+    html += `<div><strong>Avg Processing Time:</strong> ${avgProcessingTime.toFixed(1)}s</div>`;
+    html += `<div><strong>Jobs with Audio:</strong> ${stats.withAudio} / ${stats.audioRequested}</div>`;
+    html += `<div><strong>Audio Failed:</strong> <span style="color: red;">${stats.audioFailed}</span></div>`;
+    html += '</div>';
+    
+    document.getElementById('jobsStats').innerHTML = html;
+}
+
+// View job details
+window.viewJobDetails = async function(jobId) {
+    const modal = document.getElementById('jobModal');
+    const content = document.getElementById('jobModalContent');
+    
+    showLoading('jobModalContent', 'Loading job details...');
+    modal.style.display = 'block';
+    
+    // Get job details
+    const jobResponse = await JobsAPI.getJob(jobId);
+    
+    let html = '';
+    
+    if (jobResponse.ok) {
+        const job = jobResponse.data;
+        
+        html += '<h3>Job Information</h3>';
+        html += '<pre>' + JSON.stringify(job, null, 2) + '</pre>';
+        
+        // Get job logs
+        html += '<h3>Job Logs</h3>';
+        const logsResponse = await JobsAPI.getJobLogs(jobId);
+        
+        if (logsResponse.ok) {
+            html += '<pre>' + JSON.stringify(logsResponse.data, null, 2) + '</pre>';
+        } else {
+            html += '<div class="error">Failed to load logs: ' + logsResponse.error + '</div>';
+        }
+        
+    } else {
+        html = '<div class="error">Failed to load job: ' + jobResponse.error + '</div>';
+    }
+    
+    content.innerHTML = html;
+}
+
+// Close job modal
+window.closeJobModal = function() {
+    document.getElementById('jobModal').style.display = 'none';
+}
+
+// Filter jobs
+window.filterJobs = function() {
+    displayJobs(allJobs);
+}
+
+// Toggle auto refresh
+window.toggleAutoRefresh = function() {
+    if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+        document.getElementById('autoRefreshStatus').textContent = 'OFF';
+    } else {
+        autoRefreshInterval = setInterval(loadJobs, 5000);
+        document.getElementById('autoRefreshStatus').textContent = 'ON';
+    }
+}
+
+// Toggle details
+window.toggleDetails = function() {
+    showingDetails = document.getElementById('showDetails').checked;
+    displayJobs(allJobs);
+}
+
+// Toggle raw response
+window.toggleRawResponse = function() {
+    const raw = document.getElementById('jobsRaw');
+    raw.style.display = raw.style.display === 'none' ? 'block' : 'none';
+}
+
+// Close modal on click outside
+window.onclick = function(event) {
+    const modal = document.getElementById('jobModal');
+    if (event.target == modal) {
+        modal.style.display = 'none';
+    }
+}
+</script>
+</body>
+</html>

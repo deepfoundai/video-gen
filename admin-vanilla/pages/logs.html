@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>System Logs - Admin</title>
+    <link rel="stylesheet" href="../shared/styles.css?v=1">
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1753070853"></script>
+    <script src="../shared/auth.js?v=3"></script>
+    <script src="../shared/api.js?v=6"></script>
+    <script src="../shared/ui.js?v=1"></script>
+</head>
+<body>
+<div class="container">
+    <div class="nav">
+        <a href="../index.html">← Dashboard</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="credits.html">Credits</a>
+        <a href="health.html">Health</a>
+        <a href="users.html">Users</a>
+        <a href="logs.html" class="active">Logs</a>
+        <a href="debug.html">Debug</a>
+        <span style="float: right;">
+            <span id="userInfo"></span>
+            <button onclick="adminLogout()">Logout</button>
+        </span>
+    </div>
+    
+    <h1>System Logs</h1>
+    
+    <!-- Log Controls -->
+    <div class="section">
+        <h2>Log Controls</h2>
+        <label>Log Type:
+            <select id="logType" onchange="loadLogs()">
+                <option value="jobs">Job Processing Logs</option>
+                <option value="api">API Gateway Logs</option>
+                <option value="lambda">Lambda Execution Logs</option>
+                <option value="errors">Error Logs</option>
+                <option value="auth">Authentication Logs</option>
+            </select>
+        </label>
+        
+        <label>Time Range:
+            <select id="timeRange" onchange="loadLogs()">
+                <option value="1h">Last Hour</option>
+                <option value="6h">Last 6 Hours</option>
+                <option value="24h">Last 24 Hours</option>
+                <option value="7d">Last 7 Days</option>
+            </select>
+        </label>
+        
+        <label>
+            <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh()"> Auto-refresh
+        </label>
+        
+        <button onclick="loadLogs()">Refresh</button>
+        <button onclick="clearDisplayedLogs()">Clear Display</button>
+    </div>
+    
+    <!-- Log Search -->
+    <div class="section">
+        <h2>Log Search</h2>
+        <label>Search Pattern:
+            <input type="text" id="searchPattern" placeholder="Search in logs..." style="width: 400px;">
+        </label>
+        <button onclick="searchLogs()">Search</button>
+        <label>
+            <input type="checkbox" id="regexMode"> Regex Mode
+        </label>
+    </div>
+    
+    <!-- Log Stats -->
+    <div class="section">
+        <h2>Log Statistics</h2>
+        <div id="logStats"></div>
+    </div>
+    
+    <!-- Log Viewer -->
+    <div class="section">
+        <h2>Log Entries</h2>
+        <div id="logFilter">
+            <label>Filter Level:
+                <select id="levelFilter" onchange="filterLogs()">
+                    <option value="">All Levels</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="WARN">WARN</option>
+                    <option value="INFO">INFO</option>
+                    <option value="DEBUG">DEBUG</option>
+                </select>
+            </label>
+            <label>
+                <input type="checkbox" id="showTimestamps" checked onchange="filterLogs()"> Show Timestamps
+            </label>
+            <label>
+                <input type="checkbox" id="showRaw" onchange="filterLogs()"> Show Raw JSON
+            </label>
+        </div>
+        <div id="logEntries"></div>
+    </div>
+    
+    <!-- Raw Log Data -->
+    <div class="section">
+        <h2>Raw Log Stream</h2>
+        <pre id="rawLogStream" style="max-height: 400px;">Raw log data will appear here...</pre>
+    </div>
+</div>
+
+<script>
+let currentLogs = [];
+let autoRefreshInterval = null;
+const logBuffer = [];
+
+// Check auth
+document.addEventListener('authReady', (e) => {
+    document.getElementById('userInfo').textContent = `${e.detail.user.email}`;
+    loadLogs();
+});
+
+document.addEventListener('authRequired', () => {
+    window.location.href = '../index.html';
+});
+
+// Load logs
+async function loadLogs() {
+    const logType = document.getElementById('logType').value;
+    const timeRange = document.getElementById('timeRange').value;
+    
+    showLoading('logEntries', `Loading ${logType} logs...`);
+    updateRawStream(`Fetching ${logType} logs for ${timeRange}...`);
+    
+    // Simulate log fetching - in production, this would query CloudWatch
+    currentLogs = generateSampleLogs(logType, timeRange);
+    
+    displayLogs(currentLogs);
+    updateStats(currentLogs);
+    updateRawStream(JSON.stringify(currentLogs, null, 2));
+}
+
+// Generate sample logs
+function generateSampleLogs(type, range) {
+    const logs = [];
+    const now = Date.now();
+    const count = range === '1h' ? 50 : range === '6h' ? 200 : range === '24h' ? 500 : 1000;
+    
+    const templates = {
+        jobs: [
+            { level: 'INFO', message: 'Job {jobId} created by user {userId}' },
+            { level: 'INFO', message: 'Job {jobId} status changed to PROCESSING' },
+            { level: 'INFO', message: 'Job {jobId} completed successfully in {duration}s' },
+            { level: 'ERROR', message: 'Job {jobId} failed: {error}' },
+            { level: 'WARN', message: 'Job {jobId} retry attempt {attempt}' }
+        ],
+        api: [
+            { level: 'INFO', message: 'POST /api/jobs - 200 OK - {duration}ms' },
+            { level: 'INFO', message: 'GET /api/jobs/{jobId} - 200 OK - {duration}ms' },
+            { level: 'ERROR', message: 'POST /api/jobs - 400 Bad Request: {error}' },
+            { level: 'WARN', message: 'Rate limit approaching for user {userId}' },
+            { level: 'INFO', message: 'OPTIONS /api/jobs - CORS preflight' }
+        ],
+        lambda: [
+            { level: 'INFO', message: 'Lambda function started: {functionName}' },
+            { level: 'INFO', message: 'DynamoDB query completed in {duration}ms' },
+            { level: 'ERROR', message: 'Lambda timeout after {duration}s' },
+            { level: 'WARN', message: 'Memory usage: {memory}MB of {limit}MB' },
+            { level: 'DEBUG', message: 'Environment: {env}, Region: {region}' }
+        ],
+        errors: [
+            { level: 'ERROR', message: 'Unhandled exception: {error}' },
+            { level: 'ERROR', message: 'DynamoDB error: {error}' },
+            { level: 'ERROR', message: 'S3 upload failed: {error}' },
+            { level: 'ERROR', message: 'Authentication failed for user {userId}' },
+            { level: 'ERROR', message: 'Video generation error: {error}' }
+        ],
+        auth: [
+            { level: 'INFO', message: 'User {userId} authenticated successfully' },
+            { level: 'WARN', message: 'Invalid login attempt for {email}' },
+            { level: 'INFO', message: 'Token refreshed for user {userId}' },
+            { level: 'ERROR', message: 'JWT validation failed: {error}' },
+            { level: 'INFO', message: 'User {userId} logged out' }
+        ]
+    };
+    
+    const templateList = templates[type] || templates.jobs;
+    
+    for (let i = 0; i < count; i++) {
+        const template = templateList[Math.floor(Math.random() * templateList.length)];
+        const timestamp = new Date(now - Math.random() * 3600000 * 24 * 7); // Random time within range
+        
+        const log = {
+            timestamp: timestamp.toISOString(),
+            level: template.level,
+            message: template.message
+                .replace('{jobId}', generateId())
+                .replace('{userId}', generateId())
+                .replace('{duration}', (Math.random() * 10).toFixed(2))
+                .replace('{error}', generateError())
+                .replace('{attempt}', Math.floor(Math.random() * 3) + 1)
+                .replace('{memory}', Math.floor(Math.random() * 500) + 100)
+                .replace('{limit}', 1024)
+                .replace('{functionName}', 'ProcessVideoJob')
+                .replace('{env}', 'production')
+                .replace('{region}', 'us-east-1')
+                .replace('{email}', 'user@example.com'),
+            source: type,
+            requestId: generateId(),
+            metadata: {
+                service: type,
+                version: '1.0.0',
+                environment: 'production'
+            }
+        };
+        
+        logs.push(log);
+    }
+    
+    return logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+}
+
+// Helper functions
+function generateId() {
+    return Math.random().toString(36).substring(2, 10) + '-' + Math.random().toString(36).substring(2, 6);
+}
+
+function generateError() {
+    const errors = [
+        'Connection timeout',
+        'Invalid parameters',
+        'Insufficient credits',
+        'Resource not found',
+        'Internal server error'
+    ];
+    return errors[Math.floor(Math.random() * errors.length)];
+}
+
+// Display logs
+function displayLogs(logs) {
+    const levelFilter = document.getElementById('levelFilter').value;
+    const showTimestamps = document.getElementById('showTimestamps').checked;
+    const showRaw = document.getElementById('showRaw').checked;
+    
+    const filteredLogs = levelFilter 
+        ? logs.filter(log => log.level === levelFilter)
+        : logs;
+    
+    let html = '<div style="font-family: monospace; font-size: 12px;">';
+    
+    for (const log of filteredLogs.slice(0, 100)) { // Show first 100
+        const levelClass = log.level === 'ERROR' ? 'error' : 
+                          log.level === 'WARN' ? 'warning' : 
+                          log.level === 'DEBUG' ? 'text-muted' : '';
+        
+        if (showRaw) {
+            html += '<pre>' + JSON.stringify(log, null, 2) + '</pre>';
+        } else {
+            html += '<div style="margin: 5px 0;">';
+            if (showTimestamps) {
+                html += `<span class="text-muted">[${log.timestamp}]</span> `;
+            }
+            html += `<span class="${levelClass}">[${log.level}]</span> `;
+            html += log.message;
+            html += ` <span class="text-muted">(${log.requestId})</span>`;
+            html += '</div>';
+        }
+    }
+    
+    if (filteredLogs.length > 100) {
+        html += `<div class="text-muted">... and ${filteredLogs.length - 100} more entries</div>`;
+    }
+    
+    html += '</div>';
+    
+    document.getElementById('logEntries').innerHTML = html;
+}
+
+// Update statistics
+function updateStats(logs) {
+    const stats = {
+        total: logs.length,
+        error: logs.filter(l => l.level === 'ERROR').length,
+        warn: logs.filter(l => l.level === 'WARN').length,
+        info: logs.filter(l => l.level === 'INFO').length,
+        debug: logs.filter(l => l.level === 'DEBUG').length
+    };
+    
+    const errorRate = stats.total > 0 ? ((stats.error / stats.total) * 100).toFixed(1) : 0;
+    
+    let html = '<div class="grid grid-3">';
+    html += `<div><strong>Total Entries:</strong> ${stats.total}</div>`;
+    html += `<div><strong>Errors:</strong> <span class="error">${stats.error}</span></div>`;
+    html += `<div><strong>Warnings:</strong> <span class="warning">${stats.warn}</span></div>`;
+    html += `<div><strong>Info:</strong> ${stats.info}</div>`;
+    html += `<div><strong>Debug:</strong> ${stats.debug}</div>`;
+    html += `<div><strong>Error Rate:</strong> ${errorRate}%</div>`;
+    html += '</div>';
+    
+    // Top errors
+    const errors = logs.filter(l => l.level === 'ERROR');
+    if (errors.length > 0) {
+        html += '<div class="subsection">';
+        html += '<h3>Recent Errors</h3>';
+        html += '<ul>';
+        for (const error of errors.slice(0, 5)) {
+            html += `<li class="error">${error.message} - ${formatDate(error.timestamp)}</li>`;
+        }
+        html += '</ul>';
+        html += '</div>';
+    }
+    
+    document.getElementById('logStats').innerHTML = html;
+}
+
+// Search logs
+function searchLogs() {
+    const pattern = document.getElementById('searchPattern').value;
+    const isRegex = document.getElementById('regexMode').checked;
+    
+    if (!pattern) {
+        displayLogs(currentLogs);
+        return;
+    }
+    
+    let filteredLogs;
+    if (isRegex) {
+        try {
+            const regex = new RegExp(pattern, 'i');
+            filteredLogs = currentLogs.filter(log => 
+                regex.test(log.message) || 
+                regex.test(JSON.stringify(log))
+            );
+        } catch (e) {
+            alert('Invalid regex pattern');
+            return;
+        }
+    } else {
+        const searchLower = pattern.toLowerCase();
+        filteredLogs = currentLogs.filter(log => 
+            log.message.toLowerCase().includes(searchLower) ||
+            JSON.stringify(log).toLowerCase().includes(searchLower)
+        );
+    }
+    
+    displayLogs(filteredLogs);
+    updateStats(filteredLogs);
+}
+
+// Filter logs
+function filterLogs() {
+    displayLogs(currentLogs);
+}
+
+// Toggle auto refresh
+function toggleAutoRefresh() {
+    const enabled = document.getElementById('autoRefresh').checked;
+    
+    if (enabled) {
+        autoRefreshInterval = setInterval(loadLogs, 10000); // Refresh every 10 seconds
+    } else if (autoRefreshInterval) {
+        clearInterval(autoRefreshInterval);
+        autoRefreshInterval = null;
+    }
+}
+
+// Clear displayed logs
+function clearDisplayedLogs() {
+    document.getElementById('logEntries').innerHTML = '<div class="info">Logs cleared. Click Refresh to reload.</div>';
+    currentLogs = [];
+    updateStats([]);
+}
+
+// Update raw stream
+function updateRawStream(content) {
+    const stream = document.getElementById('rawLogStream');
+    logBuffer.unshift(`[${new Date().toISOString()}]\n${content}\n${'='.repeat(80)}`);
+    if (logBuffer.length > 10) logBuffer.pop();
+    
+    stream.textContent = logBuffer.join('\n');
+}
+</script>
+</body>
+</html>

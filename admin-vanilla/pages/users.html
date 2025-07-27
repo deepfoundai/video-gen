@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>User Management - Admin</title>
+    <link rel="stylesheet" href="../shared/styles.css?v=1">
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1753070853"></script>
+    <script src="../shared/auth.js?v=3"></script>
+    <script src="../shared/api.js?v=6"></script>
+    <script src="../shared/ui.js?v=1"></script>
+</head>
+<body>
+<div class="container">
+    <div class="nav">
+        <a href="../index.html">← Dashboard</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="credits.html">Credits</a>
+        <a href="health.html">Health</a>
+        <a href="users.html" class="active">Users</a>
+        <a href="logs.html">Logs</a>
+        <a href="debug.html">Debug</a>
+        <span style="float: right;">
+            <span id="userInfo"></span>
+            <button onclick="adminLogout()">Logout</button>
+        </span>
+    </div>
+    
+    <h1>User Management</h1>
+    
+    <!-- User Search -->
+    <div class="section">
+        <h2>User Search</h2>
+        <label>User ID:
+            <input type="text" id="searchUserId" placeholder="Enter user ID" style="width: 400px;">
+        </label>
+        <button onclick="searchUser()">Search User</button>
+        <button onclick="loadKnownUsers()">Load Known Users</button>
+        <button onclick="toggleCognitoInfo()">Cognito Info</button>
+    </div>
+    
+    <!-- Search Results -->
+    <div id="searchResults" class="section" style="display: none;">
+        <h2>Search Results</h2>
+        <div id="searchResultsContent"></div>
+    </div>
+    
+    <!-- Known Users List -->
+    <div class="section">
+        <h2>Known Users</h2>
+        <div id="knownUsersList"></div>
+    </div>
+    
+    <!-- User Activity -->
+    <div class="section">
+        <h2>User Activity Monitor</h2>
+        <div id="userActivity"></div>
+    </div>
+    
+    <!-- Cognito Info -->
+    <div id="cognitoInfo" class="section" style="display: none;">
+        <h2>Cognito Configuration</h2>
+        <div id="cognitoDetails"></div>
+    </div>
+    
+    <!-- Raw API Logs -->
+    <div class="section">
+        <h2>User API Logs</h2>
+        <button onclick="clearUserLogs()">Clear Logs</button>
+        <pre id="userLogs" style="max-height: 300px;">User API logs will appear here...</pre>
+    </div>
+</div>
+
+<script>
+const userLogs = [];
+const knownUsers = [
+    { userId: 'f4c8e4a8-3081-70cd-43f9-ea8a7b407430', email: 'todd.deshane@gmail.com', name: 'Todd Deshane' },
+    { userId: '04d8c4d8-20f1-7000-5cf5-90247ec54b3a', email: 'todd@theintersecto.com', name: 'Todd (Intersecto)' },
+    { userId: '44088418-f0d1-7016-37c9-3bbf83358bb6', email: 'admin.test@deepfoundai.com', name: 'Admin Test' },
+    { userId: '14c89478-c051-7078-eaab-10a63010b39c', email: 'frontend.test@deepfoundai.com', name: 'Frontend Test' },
+    { userId: '5438d488-90d1-70e8-89ae-42946ffbaea7', email: 'HARVEYCASTRO4@GMAIL.COM', name: 'Harvey Castro' }
+];
+
+// Check auth
+document.addEventListener('authReady', (e) => {
+    document.getElementById('userInfo').textContent = `${e.detail.user.email}`;
+    loadKnownUsers();
+    loadUserActivity();
+});
+
+document.addEventListener('authRequired', () => {
+    window.location.href = '../index.html';
+});
+
+// Search user
+async function searchUser() {
+    const userId = document.getElementById('searchUserId').value;
+    if (!userId) {
+        alert('Please enter a user ID');
+        return;
+    }
+    
+    logUserAction('Searching for user', { userId });
+    showLoading('searchResultsContent', 'Searching user...');
+    document.getElementById('searchResults').style.display = 'block';
+    
+    // Get user info from various sources
+    const results = {};
+    
+    // 1. Check credits
+    const creditsResponse = await CreditsAPI.adminGetUser(userId);
+    logUserAction('Credits check', creditsResponse);
+    results.credits = creditsResponse.ok ? creditsResponse.data : { error: creditsResponse.error };
+    
+    // 2. Get recent jobs
+    const jobsResponse = await JobsAPI.listJobs(100);
+    if (jobsResponse.ok) {
+        results.jobs = jobsResponse.data.jobs.filter(job => job.user_id === userId);
+    } else {
+        results.jobs = { error: jobsResponse.error };
+    }
+    
+    // 3. Check if known user
+    results.knownUser = knownUsers.find(u => u.userId === userId) || null;
+    
+    displaySearchResults(userId, results);
+}
+
+// Display search results
+function displaySearchResults(userId, results) {
+    let html = `<h3>User ID: <span class="monospace">${userId}</span></h3>`;
+    
+    // Known user info
+    if (results.knownUser) {
+        html += '<div class="subsection">';
+        html += '<h4>Known User Information</h4>';
+        html += `<strong>Email:</strong> ${results.knownUser.email}<br>`;
+        html += `<strong>Name:</strong> ${results.knownUser.name}<br>`;
+        html += '</div>';
+    }
+    
+    // Credits info
+    html += '<div class="subsection">';
+    html += '<h4>Credits Information</h4>';
+    if (results.credits.error) {
+        html += `<div class="error">Error: ${results.credits.error}</div>`;
+    } else {
+        html += `<strong>Balance:</strong> ${results.credits.credits}<br>`;
+        html += `<strong>Last Updated:</strong> ${results.credits.lastUpdated ? formatDate(results.credits.lastUpdated) : 'N/A'}<br>`;
+    }
+    html += '</div>';
+    
+    // Jobs info
+    html += '<div class="subsection">';
+    html += '<h4>Recent Jobs</h4>';
+    if (results.jobs.error) {
+        html += `<div class="error">Error: ${results.jobs.error}</div>`;
+    } else if (Array.isArray(results.jobs)) {
+        html += `<strong>Total Jobs:</strong> ${results.jobs.length}<br>`;
+        if (results.jobs.length > 0) {
+            const recent = results.jobs.slice(0, 5);
+            html += '<table>';
+            html += '<tr><th>Job ID</th><th>Status</th><th>Created</th></tr>';
+            for (const job of recent) {
+                html += '<tr>';
+                html += `<td class="monospace text-small">${job.jobId.substring(0, 8)}...</td>`;
+                html += `<td class="status-${job.status}">${job.status}</td>`;
+                html += `<td class="text-small">${formatDate(job.createdAt)}</td>`;
+                html += '</tr>';
+            }
+            html += '</table>';
+        } else {
+            html += '<div class="info">No jobs found</div>';
+        }
+    }
+    html += '</div>';
+    
+    // Raw data
+    html += '<details>';
+    html += '<summary>Raw Search Results</summary>';
+    html += '<pre>' + JSON.stringify(results, null, 2) + '</pre>';
+    html += '</details>';
+    
+    document.getElementById('searchResultsContent').innerHTML = html;
+}
+
+// Load known users
+async function loadKnownUsers() {
+    showLoading('knownUsersList', 'Loading users...');
+    
+    // Get activity data for each user
+    const userPromises = knownUsers.map(async (user) => {
+        const creditsResponse = await CreditsAPI.adminGetUser(user.userId);
+        const jobsResponse = await JobsAPI.listJobs(100);
+        
+        let jobCount = 0;
+        let lastActivity = null;
+        
+        if (jobsResponse.ok) {
+            const userJobs = jobsResponse.data.jobs.filter(job => job.user_id && job.user_id === user.userId);
+            jobCount = userJobs.length;
+            if (userJobs.length > 0) {
+                lastActivity = userJobs[0].createdAt;
+            }
+        }
+        
+        return {
+            ...user,
+            credits: creditsResponse.ok ? creditsResponse.data.credits : 'Error',
+            jobCount: jobCount,
+            lastActivity: lastActivity
+        };
+    });
+    
+    const usersWithData = await Promise.all(userPromises);
+    displayKnownUsers(usersWithData);
+}
+
+// Display known users
+function displayKnownUsers(users) {
+    let html = '<table>';
+    html += '<tr>';
+    html += '<th>User ID</th>';
+    html += '<th>Email</th>';
+    html += '<th>Name</th>';
+    html += '<th>Credits</th>';
+    html += '<th>Jobs</th>';
+    html += '<th>Last Activity</th>';
+    html += '<th>Actions</th>';
+    html += '</tr>';
+    
+    for (const user of users) {
+        html += '<tr>';
+        html += `<td class="monospace text-small">${user.userId.substring(0, 8)}...</td>`;
+        html += `<td>${user.email}</td>`;
+        html += `<td>${user.name}</td>`;
+        html += `<td><strong>${user.credits}</strong></td>`;
+        html += `<td>${user.jobCount}</td>`;
+        html += `<td class="text-small">${user.lastActivity ? formatDate(user.lastActivity) : 'Never'}</td>`;
+        html += '<td>';
+        html += `<button onclick="document.getElementById('searchUserId').value='${user.userId}'; searchUser();">Details</button>`;
+        html += '</td>';
+        html += '</tr>';
+    }
+    
+    html += '</table>';
+    
+    document.getElementById('knownUsersList').innerHTML = html;
+}
+
+// Load user activity
+async function loadUserActivity() {
+    showLoading('userActivity', 'Loading activity...');
+    
+    // Get recent jobs to show activity
+    const response = await JobsAPI.listJobs(50);
+    
+    if (response.ok) {
+        const jobs = response.data.jobs;
+        
+        // Group by user
+        const userActivity = {};
+        for (const job of jobs) {
+            const userId = job.user_id || 'unknown';
+            if (!userActivity[userId]) {
+                userActivity[userId] = {
+                    userId: userId,
+                    jobs: [],
+                    totalJobs: 0
+                };
+            }
+            userActivity[userId].jobs.push(job);
+            userActivity[userId].totalJobs++;
+        }
+        
+        // Convert to array and sort by activity
+        const activityList = Object.values(userActivity).sort((a, b) => b.totalJobs - a.totalJobs);
+        
+        displayUserActivity(activityList);
+    } else {
+        document.getElementById('userActivity').innerHTML = '<div class="error">Failed to load activity</div>';
+    }
+}
+
+// Display user activity
+function displayUserActivity(activityList) {
+    let html = '<div class="grid grid-2">';
+    
+    // Active users
+    html += '<div>';
+    html += '<h3>Most Active Users (Last 50 Jobs)</h3>';
+    html += '<table>';
+    html += '<tr><th>User ID</th><th>Jobs</th><th>Last Job</th></tr>';
+    
+    for (const activity of activityList.slice(0, 10)) {
+        const knownUser = knownUsers.find(u => u.userId === activity.userId);
+        const lastJob = activity.jobs[0];
+        
+        html += '<tr>';
+        html += `<td class="monospace text-small">${activity.userId !== 'unknown' ? activity.userId.substring(0, 8) + '...' : 'Unknown'}`;
+        if (knownUser) {
+            html += `<br><span class="text-muted">${knownUser.email}</span>`;
+        }
+        html += '</td>';
+        html += `<td>${activity.totalJobs}</td>`;
+        html += `<td class="text-small">${formatDate(lastJob.createdAt)}</td>`;
+        html += '</tr>';
+    }
+    
+    html += '</table>';
+    html += '</div>';
+    
+    // Summary stats
+    html += '<div>';
+    html += '<h3>Activity Summary</h3>';
+    const totalUsers = activityList.length;
+    const totalJobs = activityList.reduce((sum, a) => sum + a.totalJobs, 0);
+    const avgJobsPerUser = totalUsers > 0 ? (totalJobs / totalUsers).toFixed(1) : 0;
+    
+    html += `<strong>Active Users:</strong> ${totalUsers}<br>`;
+    html += `<strong>Total Jobs:</strong> ${totalJobs}<br>`;
+    html += `<strong>Avg Jobs/User:</strong> ${avgJobsPerUser}<br>`;
+    html += '</div>';
+    
+    html += '</div>';
+    
+    document.getElementById('userActivity').innerHTML = html;
+}
+
+// Toggle Cognito info
+function toggleCognitoInfo() {
+    const panel = document.getElementById('cognitoInfo');
+    if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+        displayCognitoInfo();
+    } else {
+        panel.style.display = 'none';
+    }
+}
+
+// Display Cognito info
+function displayCognitoInfo() {
+    const poolData = {
+        UserPoolId: 'us-east-1_IIpv7bRiM',
+        ClientId: '47feqvvh94v30v0qoknt0iqn4a',
+        Region: 'us-east-1'
+    };
+    
+    let html = '<div class="subsection">';
+    html += '<h3>Cognito Configuration</h3>';
+    html += '<pre>' + JSON.stringify(poolData, null, 2) + '</pre>';
+    html += '</div>';
+    
+    html += '<div class="subsection">';
+    html += '<h3>Current Session</h3>';
+    const user = getUserDetails();
+    if (user) {
+        html += '<pre>' + JSON.stringify(user, null, 2) + '</pre>';
+    } else {
+        html += '<div class="error">No active session</div>';
+    }
+    html += '</div>';
+    
+    html += '<div class="subsection">';
+    html += '<h3>Authentication Flow</h3>';
+    html += '<ol>';
+    html += '<li>User enters email and password</li>';
+    html += '<li>Cognito authenticates and returns tokens</li>';
+    html += '<li>ID token used for API authentication</li>';
+    html += '<li>Token refresh handled automatically</li>';
+    html += '</ol>';
+    html += '</div>';
+    
+    document.getElementById('cognitoDetails').innerHTML = html;
+}
+
+// User logging
+function logUserAction(action, data) {
+    const log = {
+        timestamp: new Date().toISOString(),
+        action: action,
+        data: data
+    };
+    
+    userLogs.unshift(log);
+    if (userLogs.length > 20) userLogs.pop();
+    
+    updateUserLogs();
+}
+
+function updateUserLogs() {
+    const logs = userLogs.map(log => {
+        return `[${log.timestamp}] ${log.action}\n${JSON.stringify(log.data, null, 2)}`;
+    }).join('\n\n');
+    
+    document.getElementById('userLogs').textContent = logs || 'No user actions yet';
+}
+
+function clearUserLogs() {
+    userLogs.length = 0;
+    updateUserLogs();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Debug Tools - Admin</title>
+    <link rel="stylesheet" href="../shared/styles.css?v=1">
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1753070853"></script>
+    <script src="../shared/auth.js?v=3"></script>
+    <script src="../shared/api.js?v=6"></script>
+    <script src="../shared/ui.js?v=1"></script>
+</head>
+<body>
+<div class="container">
+    <div class="nav">
+        <a href="../index.html">← Dashboard</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="credits.html">Credits</a>
+        <a href="health.html">Health</a>
+        <a href="users.html">Users</a>
+        <a href="logs.html">Logs</a>
+        <a href="debug.html" class="active">Debug</a>
+        <span style="float: right;">
+            <span id="userInfo"></span>
+            <button onclick="adminLogout()">Logout</button>
+        </span>
+    </div>
+    
+    <h1>Debug Tools</h1>
+    
+    <!-- API Request Tester -->
+    <div class="section">
+        <h2>API Request Tester</h2>
+        <div class="subsection">
+            <label>Endpoint:
+                <select id="apiEndpoint" onchange="updateRequestTemplate()">
+                    <option value="">-- Select Endpoint --</option>
+                    <option value="GET /api/jobs">GET /api/jobs (List Jobs)</option>
+                    <option value="GET /api/jobs/{id}">GET /api/jobs/{id} (Get Job)</option>
+                    <option value="POST /api/jobs">POST /api/jobs (Create Job)</option>
+                    <option value="GET /api/credits/balance">GET /api/credits/balance</option>
+                    <option value="POST /api/credits/consume">POST /api/credits/consume</option>
+                    <option value="POST /api/credits/admin/update">POST /api/credits/admin/update</option>
+                    <option value="GET /api/health">GET /api/health</option>
+                </select>
+            </label>
+            
+            <label>Parameters:
+                <input type="text" id="apiParams" placeholder="e.g., jobId for /api/jobs/{id}" style="width: 400px;">
+            </label>
+            
+            <label>Request Body (JSON):
+                <textarea id="apiBody" rows="5" style="width: 100%; font-family: monospace;" placeholder='{"key": "value"}'></textarea>
+            </label>
+            
+            <label>
+                <input type="checkbox" id="includeAuth" checked> Include Authentication
+            </label>
+            
+            <button onclick="sendApiRequest()">Send Request</button>
+            <button onclick="clearApiTest()">Clear</button>
+        </div>
+        
+        <div class="subsection">
+            <h3>Response</h3>
+            <pre id="apiResponse" style="max-height: 400px;">Response will appear here...</pre>
+        </div>
+    </div>
+    
+    <!-- Token Validator -->
+    <div class="section">
+        <h2>JWT Token Validator</h2>
+        <div class="subsection">
+            <label>Token:
+                <textarea id="tokenInput" rows="3" style="width: 100%; font-family: monospace;" placeholder="Paste JWT token here..."></textarea>
+            </label>
+            <button onclick="validateToken()">Validate Token</button>
+            <button onclick="getCurrentToken()">Get Current Token</button>
+        </div>
+        
+        <div id="tokenValidation"></div>
+    </div>
+    
+    <!-- Database Query Tool -->
+    <div class="section">
+        <h2>Database Query Tool</h2>
+        <div class="subsection">
+            <label>Table:
+                <select id="dbTable">
+                    <option value="VideoJobs">VideoJobs</option>
+                    <option value="UserCredits">UserCredits</option>
+                </select>
+            </label>
+            
+            <label>Query Type:
+                <select id="queryType" onchange="updateQueryTemplate()">
+                    <option value="scan">Scan (List All)</option>
+                    <option value="query">Query by Key</option>
+                    <option value="get">Get Item</option>
+                </select>
+            </label>
+            
+            <label>Parameters:
+                <textarea id="queryParams" rows="3" style="width: 100%; font-family: monospace;" placeholder='{"limit": 10}'></textarea>
+            </label>
+            
+            <button onclick="runDatabaseQuery()">Run Query</button>
+        </div>
+        
+        <div class="subsection">
+            <h3>Query Results</h3>
+            <pre id="dbResults" style="max-height: 400px;">Query results will appear here...</pre>
+        </div>
+    </div>
+    
+    <!-- System Diagnostics -->
+    <div class="section">
+        <h2>System Diagnostics</h2>
+        <button onclick="runDiagnostics()">Run Full Diagnostics</button>
+        <div id="diagnosticsResults"></div>
+    </div>
+    
+    <!-- Environment Info -->
+    <div class="section">
+        <h2>Environment Information</h2>
+        <div id="envInfo"></div>
+    </div>
+    
+    <!-- Debug Console -->
+    <div class="section">
+        <h2>Debug Console</h2>
+        <button onclick="clearConsole()">Clear Console</button>
+        <pre id="debugConsole" style="max-height: 300px; background: #000; color: #0F0;">Debug console output...</pre>
+    </div>
+</div>
+
+<script>
+const debugLogs = [];
+
+// Check auth
+document.addEventListener('authReady', (e) => {
+    document.getElementById('userInfo').textContent = `${e.detail.user.email}`;
+    displayEnvironmentInfo();
+});
+
+document.addEventListener('authRequired', () => {
+    window.location.href = '../index.html';
+});
+
+// API Request Tester
+async function sendApiRequest() {
+    const endpoint = document.getElementById('apiEndpoint').value;
+    const params = document.getElementById('apiParams').value;
+    const body = document.getElementById('apiBody').value;
+    const includeAuth = document.getElementById('includeAuth').checked;
+    
+    if (!endpoint) {
+        alert('Please select an endpoint');
+        return;
+    }
+    
+    debugLog('Sending API request:', { endpoint, params, body, includeAuth });
+    showLoading('apiResponse', 'Sending request...');
+    
+    try {
+        // Parse endpoint
+        const [method, path] = endpoint.split(' ');
+        let url = API_ENDPOINTS.JOBS + path.replace('/api', '');
+        
+        // Replace parameters
+        if (params && path.includes('{')) {
+            url = url.replace(/{(\w+)}/g, params);
+        }
+        
+        // Adjust URL for different APIs
+        if (path.includes('/credits')) {
+            url = API_ENDPOINTS.CREDITS + path.replace('/api/credits', '');
+        }
+        
+        const options = {
+            method: method,
+            headers: {}
+        };
+        
+        if (includeAuth) {
+            const token = await getAuthToken();
+            options.headers['Authorization'] = `Bearer ${token}`;
+        }
+        
+        if (body && method !== 'GET') {
+            options.headers['Content-Type'] = 'application/json';
+            options.body = body;
+        }
+        
+        const startTime = Date.now();
+        const response = await fetch(url, options);
+        const duration = Date.now() - startTime;
+        
+        const responseData = await response.text();
+        let parsedData;
+        try {
+            parsedData = JSON.parse(responseData);
+        } catch {
+            parsedData = responseData;
+        }
+        
+        const result = {
+            request: {
+                method,
+                url,
+                headers: options.headers,
+                body: body ? JSON.parse(body) : undefined
+            },
+            response: {
+                status: response.status,
+                statusText: response.statusText,
+                headers: Object.fromEntries(response.headers),
+                data: parsedData,
+                duration: `${duration}ms`
+            }
+        };
+        
+        document.getElementById('apiResponse').textContent = JSON.stringify(result, null, 2);
+        debugLog('API response received:', result);
+        
+    } catch (error) {
+        const errorResult = {
+            error: error.message,
+            stack: error.stack
+        };
+        document.getElementById('apiResponse').textContent = JSON.stringify(errorResult, null, 2);
+        debugLog('API request error:', errorResult);
+    }
+}
+
+// Update request template
+function updateRequestTemplate() {
+    const endpoint = document.getElementById('apiEndpoint').value;
+    const bodyField = document.getElementById('apiBody');
+    
+    const templates = {
+        'POST /api/jobs': {
+            prompt: "Generate a beautiful sunset video",
+            seconds: 5,
+            resolution: "1080p",
+            provider: "auto"
+        },
+        'POST /api/credits/consume': {
+            credits: 1
+        },
+        'POST /api/credits/admin/update': {
+            userId: "user-id-here",
+            credits: 100,
+            operation: "set"
+        }
+    };
+    
+    if (templates[endpoint]) {
+        bodyField.value = JSON.stringify(templates[endpoint], null, 2);
+    } else {
+        bodyField.value = '';
+    }
+}
+
+// Clear API test
+function clearApiTest() {
+    document.getElementById('apiEndpoint').value = '';
+    document.getElementById('apiParams').value = '';
+    document.getElementById('apiBody').value = '';
+    document.getElementById('apiResponse').textContent = 'Response will appear here...';
+}
+
+// Token validator
+function validateToken() {
+    const token = document.getElementById('tokenInput').value.trim();
+    
+    if (!token) {
+        alert('Please enter a token');
+        return;
+    }
+    
+    debugLog('Validating token...');
+    
+    try {
+        // Decode token parts
+        const parts = token.split('.');
+        if (parts.length !== 3) {
+            throw new Error('Invalid token format');
+        }
+        
+        const header = JSON.parse(atob(parts[0]));
+        const payload = JSON.parse(atob(parts[1]));
+        const signature = parts[2];
+        
+        const now = Math.floor(Date.now() / 1000);
+        const validation = {
+            header,
+            payload,
+            signature: signature.substring(0, 20) + '...',
+            validation: {
+                expired: payload.exp && payload.exp < now,
+                notBefore: payload.nbf && payload.nbf > now,
+                issuer: payload.iss,
+                audience: payload.aud,
+                subject: payload.sub || payload['cognito:username'],
+                issuedAt: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
+                expiration: payload.exp ? new Date(payload.exp * 1000).toISOString() : null
+            }
+        };
+        
+        let html = '<div class="subsection">';
+        html += '<h3>Token Validation Results</h3>';
+        html += '<pre>' + JSON.stringify(validation, null, 2) + '</pre>';
+        
+        if (validation.validation.expired) {
+            html += '<div class="error">Token is expired!</div>';
+        } else {
+            html += '<div class="success">Token is valid</div>';
+        }
+        
+        html += '</div>';
+        
+        document.getElementById('tokenValidation').innerHTML = html;
+        debugLog('Token validation complete:', validation);
+        
+    } catch (error) {
+        document.getElementById('tokenValidation').innerHTML = 
+            '<div class="error">Invalid token: ' + error.message + '</div>';
+        debugLog('Token validation error:', error);
+    }
+}
+
+// Get current token
+async function getCurrentToken() {
+    try {
+        const token = await getAuthToken();
+        document.getElementById('tokenInput').value = token;
+        debugLog('Current token retrieved');
+    } catch (error) {
+        alert('No active session');
+        debugLog('Failed to get current token:', error);
+    }
+}
+
+// Database query
+async function runDatabaseQuery() {
+    const table = document.getElementById('dbTable').value;
+    const queryType = document.getElementById('queryType').value;
+    const params = document.getElementById('queryParams').value;
+    
+    debugLog('Running database query:', { table, queryType, params });
+    showLoading('dbResults', 'Running query...');
+    
+    // Simulate database query
+    const sampleData = {
+        VideoJobs: [
+            {
+                jobId: 'job-123',
+                user_id: 'user-456',
+                status: 'COMPLETED',
+                prompt: 'Sample video',
+                createdAt: new Date().toISOString()
+            }
+        ],
+        UserCredits: [
+            {
+                userId: 'user-456',
+                credits: 100,
+                lastUpdated: new Date().toISOString()
+            }
+        ]
+    };
+    
+    setTimeout(() => {
+        const result = {
+            table,
+            queryType,
+            parameters: params ? JSON.parse(params) : {},
+            results: sampleData[table] || [],
+            count: sampleData[table]?.length || 0,
+            scannedCount: sampleData[table]?.length || 0,
+            consumedCapacity: {
+                TableName: table,
+                CapacityUnits: 1
+            }
+        };
+        
+        document.getElementById('dbResults').textContent = JSON.stringify(result, null, 2);
+        debugLog('Database query complete:', result);
+    }, 1000);
+}
+
+// Update query template
+function updateQueryTemplate() {
+    const queryType = document.getElementById('queryType').value;
+    const templates = {
+        scan: { limit: 10 },
+        query: { userId: "user-id-here", limit: 10 },
+        get: { jobId: "job-id-here" }
+    };
+    
+    document.getElementById('queryParams').value = JSON.stringify(templates[queryType] || {}, null, 2);
+}
+
+// Run diagnostics
+async function runDiagnostics() {
+    showLoading('diagnosticsResults', 'Running diagnostics...');
+    debugLog('Starting system diagnostics...');
+    
+    const diagnostics = {
+        timestamp: new Date().toISOString(),
+        browser: {
+            userAgent: navigator.userAgent,
+            language: navigator.language,
+            platform: navigator.platform,
+            cookiesEnabled: navigator.cookieEnabled,
+            onLine: navigator.onLine
+        },
+        screen: {
+            width: screen.width,
+            height: screen.height,
+            colorDepth: screen.colorDepth,
+            pixelRatio: window.devicePixelRatio
+        },
+        window: {
+            innerWidth: window.innerWidth,
+            innerHeight: window.innerHeight,
+            location: {
+                href: window.location.href,
+                origin: window.location.origin,
+                protocol: window.location.protocol
+            }
+        },
+        performance: {
+            memory: performance.memory || 'Not available',
+            navigation: {
+                type: performance.navigation?.type,
+                redirectCount: performance.navigation?.redirectCount
+            }
+        },
+        apis: {}
+    };
+    
+    // Test API connectivity
+    const apis = [
+        { name: 'Jobs API', url: API_ENDPOINTS.JOBS + '/health' },
+        { name: 'Credits API', url: API_ENDPOINTS.CREDITS + '/health' },
+        { name: 'Frontend', url: API_ENDPOINTS.FRONTEND }
+    ];
+    
+    for (const api of apis) {
+        try {
+            const start = Date.now();
+            const response = await fetch(api.url, { 
+                method: 'GET',
+                mode: 'cors',
+                headers: {
+                    'Authorization': `Bearer ${await getAuthToken()}`
+                }
+            });
+            diagnostics.apis[api.name] = {
+                status: response.status,
+                ok: response.ok,
+                responseTime: Date.now() - start + 'ms'
+            };
+        } catch (error) {
+            diagnostics.apis[api.name] = {
+                status: 'Error',
+                error: error.message
+            };
+        }
+    }
+    
+    let html = '<div class="subsection">';
+    html += '<h3>Diagnostics Report</h3>';
+    html += '<pre>' + JSON.stringify(diagnostics, null, 2) + '</pre>';
+    html += '</div>';
+    
+    document.getElementById('diagnosticsResults').innerHTML = html;
+    debugLog('Diagnostics complete:', diagnostics);
+}
+
+// Display environment info
+function displayEnvironmentInfo() {
+    const info = {
+        apiEndpoints: API_ENDPOINTS,
+        cognitoConfig: {
+            userPoolId: 'us-east-1_IIpv7bRiM',
+            clientId: '47feqvvh94v30v0qoknt0iqn4a',
+            region: 'us-east-1'
+        },
+        currentUser: getUserDetails(),
+        localStorage: {
+            keys: Object.keys(localStorage),
+            size: new Blob(Object.values(localStorage)).size + ' bytes'
+        },
+        sessionStorage: {
+            keys: Object.keys(sessionStorage),
+            size: new Blob(Object.values(sessionStorage)).size + ' bytes'
+        }
+    };
+    
+    let html = '<pre>' + JSON.stringify(info, null, 2) + '</pre>';
+    document.getElementById('envInfo').innerHTML = html;
+}
+
+// Debug logging
+function debugLog(message, data) {
+    const log = {
+        timestamp: new Date().toISOString(),
+        message,
+        data
+    };
+    
+    debugLogs.unshift(log);
+    if (debugLogs.length > 50) debugLogs.pop();
+    
+    updateDebugConsole();
+}
+
+function updateDebugConsole() {
+    const console = document.getElementById('debugConsole');
+    const logs = debugLogs.map(log => {
+        let text = `[${log.timestamp}] ${log.message}`;
+        if (log.data) {
+            text += '\n' + JSON.stringify(log.data, null, 2);
+        }
+        return text;
+    }).join('\n\n');
+    
+    console.textContent = logs || 'Debug console output...';
+}
+
+function clearConsole() {
+    debugLogs.length = 0;
+    updateDebugConsole();
+}
+</script>
+</body>
+</html>

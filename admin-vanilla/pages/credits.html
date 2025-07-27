@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Credits Management - Admin</title>
+    <link rel="stylesheet" href="../shared/styles.css?v=1">
+    <script src="https://unpkg.com/amazon-cognito-identity-js@6.3.12/dist/amazon-cognito-identity.min.js?v=1753070853"></script>
+    <script src="../shared/auth.js?v=3"></script>
+    <script src="../shared/api.js?v=6"></script>
+    <script src="../shared/ui.js?v=1"></script>
+</head>
+<body>
+<div class="container">
+    <div class="nav">
+        <a href="../index.html">← Dashboard</a>
+        <a href="jobs.html">Jobs</a>
+        <a href="credits.html" class="active">Credits</a>
+        <a href="health.html">Health</a>
+        <a href="users.html">Users</a>
+        <a href="logs.html">Logs</a>
+        <a href="debug.html">Debug</a>
+        <span style="float: right;">
+            <span id="userInfo"></span>
+            <button onclick="adminLogout()">Logout</button>
+        </span>
+    </div>
+    
+    <h1>Credits Management</h1>
+    
+    <!-- Quick Actions -->
+    <div class="section">
+        <h2>Quick Actions</h2>
+        <button onclick="loadAllUsers()">Load All Users</button>
+        <button onclick="showAddCreditsForm()">Add Credits to User</button>
+        <button onclick="toggleDebugPanel()">Debug Panel</button>
+        <span id="creditsStats" style="margin-left: 20px; font-weight: bold;"></span>
+    </div>
+    
+    <!-- Add/Update Credits Form -->
+    <div id="creditsForm" class="section" style="display: none;">
+        <h2>Add/Update Credits</h2>
+        <form onsubmit="updateUserCredits(event)">
+            <label>User ID:
+                <input type="text" id="updateUserId" placeholder="User ID" required style="width: 400px;">
+            </label>
+            <br>
+            <label>Credits:
+                <input type="number" id="updateCredits" placeholder="Credits amount" required min="0">
+            </label>
+            <br>
+            <label>Operation:
+                <select id="updateOperation">
+                    <option value="set">Set to exact amount</option>
+                    <option value="add">Add to current balance</option>
+                    <option value="remove">Remove from current balance</option>
+                </select>
+            </label>
+            <br>
+            <button type="submit">Update Credits</button>
+            <button type="button" onclick="hideAddCreditsForm()">Cancel</button>
+        </form>
+        <div id="updateMessage"></div>
+    </div>
+    
+    <!-- Users Table -->
+    <div class="section">
+        <h2>Users with Credits</h2>
+        <div id="usersError"></div>
+        <div id="usersTable"></div>
+    </div>
+    
+    <!-- Debug Panel -->
+    <div id="debugPanel" class="section" style="display: none;">
+        <h2>Debug Panel</h2>
+        
+        <h3>Test Credit Operations</h3>
+        <div class="subsection">
+            <label>User ID:
+                <input type="text" id="debugUserId" placeholder="User ID to test" style="width: 400px;">
+            </label>
+            <button onclick="debugGetBalance()">Get Balance</button>
+            <button onclick="debugGetAdminInfo()">Get Admin Info</button>
+            <button onclick="debugConsume()">Test Consume (1 credit)</button>
+        </div>
+        
+        <h3>Debug Output</h3>
+        <pre id="debugOutput" style="max-height: 400px;">Debug output will appear here...</pre>
+    </div>
+    
+    <!-- Raw Responses -->
+    <div class="section">
+        <h2>Recent API Calls</h2>
+        <button onclick="clearApiLogs()">Clear Logs</button>
+        <pre id="apiLogs" style="max-height: 300px;">API call logs will appear here...</pre>
+    </div>
+</div>
+
+<script>
+let knownUsers = [];
+const apiLogs = [];
+
+// Check auth
+document.addEventListener('authReady', (e) => {
+    document.getElementById('userInfo').textContent = `${e.detail.user.email}`;
+    
+    if (isAdmin()) {
+        loadAllUsers();
+    } else {
+        document.getElementById('usersError').innerHTML = '<div class="error">Admin access required</div>';
+    }
+});
+
+document.addEventListener('authRequired', () => {
+    window.location.href = '../index.html';
+});
+
+// Load all users
+async function loadAllUsers() {
+    showLoading('usersTable', 'Loading users...');
+    document.getElementById('usersError').innerHTML = '';
+    
+    // For now, we'll use known user IDs since we don't have a list endpoint
+    // In production, this should query Cognito or a users table
+    knownUsers = [
+        { userId: 'f4c8e4a8-3081-70cd-43f9-ea8a7b407430', email: 'todd.deshane@gmail.com' },
+        { userId: '04d8c4d8-20f1-7000-5cf5-90247ec54b3a', email: 'todd@theintersecto.com' },
+        { userId: '44088418-f0d1-7016-37c9-3bbf83358bb6', email: 'admin.test@deepfoundai.com' },
+        { userId: '14c89478-c051-7078-eaab-10a63010b39c', email: 'frontend.test@deepfoundai.com' }
+    ];
+    
+    // Get credits for each user
+    const userPromises = knownUsers.map(async (user) => {
+        const response = await CreditsAPI.adminGetUser(user.userId);
+        logApiCall('GET admin user', response);
+        
+        if (response.ok) {
+            return {
+                ...user,
+                credits: response.data.credits,
+                lastUpdated: response.data.lastUpdated,
+                email: response.data.email || user.email
+            };
+        } else {
+            return {
+                ...user,
+                credits: 'Error',
+                error: response.error
+            };
+        }
+    });
+    
+    const usersWithCredits = await Promise.all(userPromises);
+    displayUsers(usersWithCredits);
+    updateStats(usersWithCredits);
+}
+
+// Display users table
+function displayUsers(users) {
+    let html = '<table>';
+    html += '<tr>';
+    html += '<th>User ID</th>';
+    html += '<th>Email</th>';
+    html += '<th>Credits</th>';
+    html += '<th>Last Updated</th>';
+    html += '<th>Actions</th>';
+    html += '</tr>';
+    
+    for (const user of users) {
+        html += '<tr>';
+        html += `<td class="monospace text-small">${user.userId}</td>`;
+        html += `<td>${user.email || 'Unknown'}</td>`;
+        html += `<td><strong>${user.credits}</strong></td>`;
+        html += `<td class="text-small">${user.lastUpdated ? formatDate(user.lastUpdated) : 'N/A'}</td>`;
+        html += '<td>';
+        html += `<button onclick="setCreditsForm('${user.userId}', ${user.credits})">Edit</button>`;
+        html += `<button onclick="addCreditsForm('${user.userId}', 10)">+10</button>`;
+        html += `<button onclick="removeCreditsForm('${user.userId}', 1)">-1</button>`;
+        html += '</td>';
+        html += '</tr>';
+        
+        if (user.error) {
+            html += '<tr>';
+            html += `<td colspan="5" class="error">Error: ${user.error}</td>`;
+            html += '</tr>';
+        }
+    }
+    
+    html += '</table>';
+    
+    document.getElementById('usersTable').innerHTML = html;
+}
+
+// Update statistics
+function updateStats(users) {
+    const totalCredits = users.reduce((sum, user) => {
+        const credits = parseInt(user.credits) || 0;
+        return sum + credits;
+    }, 0);
+    
+    const activeUsers = users.filter(u => parseInt(u.credits) > 0).length;
+    
+    document.getElementById('creditsStats').textContent = 
+        `Total Credits: ${totalCredits} | Active Users: ${activeUsers}`;
+}
+
+// Show add credits form
+function showAddCreditsForm() {
+    document.getElementById('creditsForm').style.display = 'block';
+    document.getElementById('updateMessage').innerHTML = '';
+}
+
+// Hide add credits form
+function hideAddCreditsForm() {
+    document.getElementById('creditsForm').style.display = 'none';
+}
+
+// Set credits form
+function setCreditsForm(userId, currentCredits) {
+    showAddCreditsForm();
+    document.getElementById('updateUserId').value = userId;
+    document.getElementById('updateCredits').value = currentCredits;
+    document.getElementById('updateOperation').value = 'set';
+}
+
+// Add credits form
+function addCreditsForm(userId, amount) {
+    showAddCreditsForm();
+    document.getElementById('updateUserId').value = userId;
+    document.getElementById('updateCredits').value = amount;
+    document.getElementById('updateOperation').value = 'add';
+}
+
+// Remove credits form
+function removeCreditsForm(userId, amount) {
+    showAddCreditsForm();
+    document.getElementById('updateUserId').value = userId;
+    document.getElementById('updateCredits').value = amount;
+    document.getElementById('updateOperation').value = 'remove';
+}
+
+// Update user credits
+async function updateUserCredits(event) {
+    event.preventDefault();
+    
+    const userId = document.getElementById('updateUserId').value;
+    const credits = parseInt(document.getElementById('updateCredits').value);
+    const operation = document.getElementById('updateOperation').value;
+    
+    showLoading('updateMessage', 'Updating credits...');
+    
+    const response = await CreditsAPI.adminUpdateCredits(userId, credits, operation);
+    logApiCall('UPDATE credits', response);
+    
+    if (response.ok) {
+        displaySuccess(`Credits updated successfully. New balance: ${response.data.newBalance}`, 'updateMessage');
+        setTimeout(() => {
+            hideAddCreditsForm();
+            loadAllUsers();
+        }, 2000);
+    } else {
+        displayError(response, 'updateMessage');
+    }
+}
+
+// Debug functions
+function toggleDebugPanel() {
+    const panel = document.getElementById('debugPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+async function debugGetBalance() {
+    const userId = document.getElementById('debugUserId').value;
+    const response = await CreditsAPI.getBalance(userId);
+    logApiCall('DEBUG: Get Balance', response);
+    document.getElementById('debugOutput').textContent = JSON.stringify(response, null, 2);
+}
+
+async function debugGetAdminInfo() {
+    const userId = document.getElementById('debugUserId').value;
+    const response = await CreditsAPI.adminGetUser(userId);
+    logApiCall('DEBUG: Get Admin Info', response);
+    document.getElementById('debugOutput').textContent = JSON.stringify(response, null, 2);
+}
+
+async function debugConsume() {
+    const response = await CreditsAPI.consumeCredits(1);
+    logApiCall('DEBUG: Consume Credits', response);
+    document.getElementById('debugOutput').textContent = JSON.stringify(response, null, 2);
+}
+
+// API logging
+function logApiCall(operation, response) {
+    const log = {
+        timestamp: new Date().toISOString(),
+        operation: operation,
+        status: response.status,
+        duration: response.duration,
+        response: response
+    };
+    
+    apiLogs.unshift(log);
+    if (apiLogs.length > 10) apiLogs.pop();
+    
+    updateApiLogs();
+}
+
+function updateApiLogs() {
+    const logs = apiLogs.map(log => {
+        return `[${log.timestamp}] ${log.operation} - Status: ${log.status} - Duration: ${log.duration}ms\n` +
+               JSON.stringify(log.response, null, 2);
+    }).join('\n\n' + '='.repeat(80) + '\n\n');
+    
+    document.getElementById('apiLogs').textContent = logs || 'No API calls yet';
+}
+
+function clearApiLogs() {
+    apiLogs.length = 0;
+    updateApiLogs();
+}
+</script>
+</body>
+</html>
