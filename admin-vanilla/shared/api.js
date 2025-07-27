@@ -7,14 +7,16 @@ const API_ENDPOINTS = {
     FRONTEND: 'https://video.deepfoundai.com'
 };
 
-// Import getValidAccessToken from auth.js if available
-const getValidAccessToken = window.getValidAccessToken || (async () => {
-    // Fallback to getting the token from auth module
-    if (window.getAuthToken) {
-        return window.getAuthToken();
-    }
-    throw new Error('Auth module not loaded');
-});
+// Use getValidAccessToken from auth.js if available, otherwise create fallback
+if (!window.getValidAccessToken) {
+    window.getValidAccessToken = async () => {
+        // Fallback to getting the token from auth module
+        if (window.getAuthToken) {
+            return window.getAuthToken();
+        }
+        throw new Error('Auth module not loaded');
+    };
+}
 
 // Generic API call with full logging
 async function apiCall(url, options = {}) {
@@ -257,3 +259,8 @@ function showLoading(elementId, message = 'Loading...') {
     
     element.innerHTML = `<div class="loading">${message}</div>`;
 }
+
+// Export functions to global scope
+window.showLoading = showLoading;
+window.displayError = displayError;
+window.displaySuccess = displaySuccess;
